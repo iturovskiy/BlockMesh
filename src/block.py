@@ -1,11 +1,18 @@
 import json
 import os.path
-
+import time
+from hashlib import sha256
 
 NOT_SIGNED = 'EMPTY'
+GENESIS_BLOCK = sha256(bytes(json.dumps({'header': {'version': '0.01a',
+                                                    'timestamp': 1587560218714243400,
+                                                    'parents': 'GENESIS'}}), 'utf-8')).hexdigest()
 
 
 class Transaction:
+    """
+    Транзакция
+    """
     sender = None
     participants = None
     data = {}
@@ -28,16 +35,22 @@ class Transaction:
             self.participants = kwargs['participants']
         else:
             self.participants = {kwargs['sender_addr']: kwargs['sender_sign']}
-            for recv in kwargs['receivers']:
-                self.participants[recv] = NOT_SIGNED
+            if 'receivers' in kwargs:
+                for recv in kwargs['receivers']:
+                    self.participants[recv] = NOT_SIGNED
         self.data = kwargs['data'] if 'data' in kwargs else dict()
 
     def __eq__(self, other):
         return self.sender == other.sender and self.participants == other.participants and self.data == other.data
 
     @staticmethod
-    def load(data):
-        js = json.loads(data)
+    def load(sdata):
+        """
+        Чтение транзакции из JSON в формате строки и создание объекта
+        :param sdata: JSON в формате строки
+        :return: Transaction
+        """
+        js = json.loads(sdata)
         send = js['send']
         participants = js['participants']
         data = js['data']
@@ -49,10 +62,8 @@ class Transaction:
         :param addr: адрес получателя
         :param sign: подпись получателя
         """
-        if addr not in self.participants:
-            raise
-        if self.participants[addr] != NOT_SIGNED:
-            raise
+        assert addr in self.participants
+        assert self.participants[addr] == NOT_SIGNED
         self.participants[addr] = sign
 
     def is_ready(self):
@@ -85,51 +96,73 @@ class Block:
     """
     Блок транзакции
     """
-    version = 0.01  # версия, пущай будет
+    version = '0.01'  # версия, пущай будет
+    # todo: approve for block
 
-    def __init__(self, transaction: Transaction, parents: list = None):
+    def __init__(self, transaction: Transaction, parents: list = None, timestamp: int = None):
+        """
+        :param transaction: готовая транзакция
+        :param parents: хеши родительских блоков
+        :param timestamp: временная метка - количество нс с начала Эпохи
+        """
+        if not transaction.is_ready():
+            raise RuntimeError(f"Could not create block for unsigned transaction: {transaction}; "
+                               f"parents: {parents}, time: {timestamp}")
         self.tx = transaction
         self.parents = parents if parents else []
+        self.timestamp = timestamp if timestamp else time.time_ns()
+        self.approved = None
 
     def __hash__(self):
-        return hash((self.version, *self.parents))
+        return sha256(bytes(json.dumps({'header': {'version': self.version,
+                                                   'timestamp': self.timestamp,
+                                                   'parents': self.parents}}), 'utf-8')).hexdigest()
 
     def __eq__(self, other):
-        return self.version == other.verson and tuple(self.parents) == tuple(other.parents) and self.tx == other.tx
+        return self.version == other.verson and self.timestamp == other.timestamp and \
+               tuple(self.parents) == tuple(other.parents) and self.tx == other.tx
 
-    def json(self):
+    def dumps(self):
         """
         :return: json объект блока транзакции
         """
         return json.dumps({'header': {'version': self.version,
+                                      'timestamp': self.timestamp,
                                       'parents': self.parents},
                            'transaction': self.tx.json()})
 
-    def save(self, path):
+    def save(self, path_to_dir):
         """
         Запись блока транзакции в файл
-        :param path: путь до файла
+        :param path_to_dir: путь до файла
         """
-        path = os.path.abspath(path)
-        folder = os.path.dirname(path)
-        if not folder:
-            os.makedirs(folder)
-        with open(path, "w") as out:
-            out.write(self.json())
+        assert self.tx.is_ready()
+        if not self.approved or self.approved is False:
+            raise RuntimeError(f"Block {self} is not approved and can't be saved")
+        if not os.path.abspath(path_to_dir):
+            os.makedirs(path_to_dir)
+        fname = str(self.__hash__())
+        with open(os.path.join(path_to_dir, fname), "w") as out:
+            out.write(self.dumps())
+        return fname
 
     @staticmethod
-    def load(path):
+    def load(path_to_file):
         """
         Чтение блока транзакции из файла и создание объекта
-        :param path: путь до файла
+        :param path_to_file: путь до файла
         :return: Block
         """
-        path = os.path.abspath(path)
-        with open(path) as json_file:
+        path_to_file = os.path.abspath(path_to_file)
+        if path_to_file is None:
+            raise RuntimeError(f"Could not load Block: {path_to_file} does not exist")
+        if not os.path.isfile(path_to_file):
+            raise RuntimeError(f"Could not load Block: {path_to_file} not file")
+        with open(path_to_file, "r") as json_file:
             data = json.load(json_file)
-            txs = data['transaction']
-            ver = data['header']['version']
-            par = data['header']['parents']
-            block = Block(Transaction.load(txs), par)
-            block.version = ver
+            block = Block(Transaction.load(data['transaction']),
+                          data['header']['parents'],
+                          data['header']['timestamp'])
+            block.version = data['header']['version']
+            block.approved = True
             return block
