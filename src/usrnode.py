@@ -74,6 +74,22 @@ class UsrNode:
         block = self.__create_block(tx)
         self.stg.add_new_block(block)
 
+    def perform_modified(self, recv_addr: list, data: dict = None):
+        """
+        Первый этап работы blockmesh - взаимодействие
+        :param recv_addr: список получателей транзакции
+        :param data: данные
+        """
+        assert self.inited
+        tx = self.__create_tx(recv_addr, data)
+        receivers = self.stg.get_users(recv_addr)
+        for receiver in receivers:
+            receiver.sign_tx(tx)
+        block = self.__create_block(tx)
+        self.stg.add_new_block(block)
+        for receiver in receivers:
+            receiver.stg.add_new_block(block)
+
     def receive_from_stg(self, block: Block):
         """
         Продолжение второго этапа работы blockmesh - внедрение блока

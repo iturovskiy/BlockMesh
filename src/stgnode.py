@@ -1,5 +1,6 @@
 from src.block import *
 from src.usrnode import *
+from collections import Counter
 
 SHARED = []
 
@@ -111,7 +112,13 @@ class StgNode:
         global SHARED
         if not SHARED:
             return
-        SHARED.sort(key=lambda b: b[0].timestamp)
+        uniques = {}
+        for b, stg in SHARED:
+            if b not in uniques:
+                uniques[b] = [1, [stg]]
+            else:
+                uniques[b][0] += 1
+                uniques[b][1].append(stg)
         # todo: continue
 
     def perform_step_3(self):
