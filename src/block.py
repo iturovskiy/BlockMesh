@@ -3,9 +3,9 @@ import os.path
 import time
 from hashlib import sha256
 
-NOT_SIGNED = 'EMPTY'
+NOT_SIGNED = None
 GENESIS_BLOCK = sha256(bytes(json.dumps({'header': {'version': '0.01a',
-                                                    'timestamp': 1587560218714243400,
+                                                    'timestamp': 0,
                                                     'parents': 'GENESIS'}}), 'utf-8')).hexdigest()
 
 
@@ -81,7 +81,7 @@ class Transaction:
         """
         :return: Список участников транзакции
         """
-        return self.participants.keys()
+        return tuple(self.participants.keys())
 
     def json(self):
         """
@@ -97,9 +97,8 @@ class Block:
     Блок транзакции
     """
     version = '0.01'  # версия, пущай будет
-    # todo: approve for block
 
-    def __init__(self, transaction: Transaction, parents: list = None, timestamp: int = None):
+    def __init__(self, transaction: Transaction, timestamp: int = None, parents: dict = None):
         """
         :param transaction: готовая транзакция
         :param parents: хеши родительских блоков
@@ -109,7 +108,7 @@ class Block:
             raise RuntimeError(f"Could not create block for unsigned transaction: {transaction}; "
                                f"parents: {parents}, time: {timestamp}")
         self.tx = transaction
-        self.parents = parents if parents else []
+        self.parents = parents if parents else {}
         self.timestamp = timestamp if timestamp else time.time_ns()
         self.approved = None
 
@@ -121,6 +120,23 @@ class Block:
     def __eq__(self, other):
         return self.version == other.verson and self.timestamp == other.timestamp and \
                tuple(self.parents) == tuple(other.parents) and self.tx == other.tx
+
+    def set_parents(self, parents: dict):
+        """
+        :param parents: dict адрес - хэш
+        :return:
+        """
+        participants = self.participants()
+        for parent, hsh in parents:
+            if parent not in participants:
+                raise RuntimeError(f"Parent {parent} not in {participants}")
+            self.parents[parent] = hsh
+
+    def participants(self):
+        return tuple(self.tx.participants.keys())
+
+    def sender(self):
+        return self.tx.sender
 
     def dumps(self):
         """
@@ -160,9 +176,7 @@ class Block:
             raise RuntimeError(f"Could not load Block: {path_to_file} not file")
         with open(path_to_file, "r") as json_file:
             data = json.load(json_file)
-            block = Block(Transaction.load(data['transaction']),
-                          data['header']['parents'],
-                          data['header']['timestamp'])
+            block = Block(Transaction.load(data['transaction']), data['header']['timestamp'], data['header']['parents'])
             block.version = data['header']['version']
             block.approved = True
             return block

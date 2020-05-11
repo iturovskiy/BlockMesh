@@ -24,6 +24,7 @@ class UsrNode:
         self.stg = stg
         self.inited = False
         self.head = head
+        stg.add_new_user(self)
 
     def __del__(self):
         if self.inited and self.head:
@@ -44,10 +45,10 @@ class UsrNode:
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as f:
             data = json.load(f)
             node = UsrNode(path_to_dir, data['addr'], data['sign'], stg, data['head'])
-
             return node
 
     def change_stg(self, new_stg):
+        # todo: сделать позже
         pass
 
     def sign_tx(self, tx: Transaction):
@@ -67,9 +68,10 @@ class UsrNode:
         :param data: данные
         """
         assert self.inited
-        tx = self._create_tx(recv_addr, data)
-        parents = [receiver.sign_tx(tx) for receiver in self.stg.get_users(recv_addr)]
-        block = self._create_block(tx, parents)
+        tx = self.__create_tx(recv_addr, data)
+        for receiver in self.stg.get_users(recv_addr):
+            receiver.sign_tx(tx)
+        block = self.__create_block(tx)
         self.stg.add_new_block(block)
 
     def receive_from_stg(self, block: Block):
@@ -77,9 +79,26 @@ class UsrNode:
         Продолжение второго этапа работы blockmesh - внедрение блока
         :param block: блок для внедрения в локальную цепочку
         """
-        pass
+        if block.approved and self.check_chain(block):
+            self.head = block.save(self.path_to_dir)
 
-    def _create_tx(self, receivers: list, data: dict = None):
+    def check_chain(self, block: Block):
+        """
+        :param block:
+        :return:
+        """
+        assert block.parents[self.addr] == self.head
+        parent_hash = self.head
+        while parent_hash != GENESIS_BLOCK:
+            try:
+                read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
+            except Exception as e:
+                print(e)
+                return False
+            parent_hash = read_block.parents[self.addr]
+        return True
+
+    def __create_tx(self, receivers: list, data: dict = None):
         """
         Создание транзакции
         :param receivers: список получателей транзакции
@@ -89,12 +108,11 @@ class UsrNode:
         return Transaction(sender_addr=self.addr, sender_sign=self.sign,
                            receivers=receivers, data=data if data else {})
 
-    def _create_block(self, tx: Transaction, parents: list):
+    def __create_block(self, tx: Transaction):
         """
         Создание блока транзакции
         :param tx: транзакция
-        :param parents: cписок хэшей блоков родителей
         :return: Блок транзакции - Block
         """
         assert tx.sender == self.addr
-        return Block(tx, parents, time.time_ns())
+        return Block(tx, time.time_ns())
