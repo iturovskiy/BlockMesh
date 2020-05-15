@@ -1,5 +1,6 @@
 from src.block import *
-from src.stgnode import *
+from src.stgnode import StgNode
+from model.model import Mod
 
 HEAD_FILE = "HEAD"
 
@@ -9,8 +10,9 @@ class UsrNode:
     Класс реализующий функционал узлов-участников blockmesh сети
     """
 
-    def __init__(self, path_to_dir: str, addr: str, sign: str, stg: StgNode = None, head: str = None):
+    def __init__(self, mod: Mod, path_to_dir: str, addr: str, sign: str, stg: StgNode = None, head: str = None):
         """
+        :param mod: режим работы
         :param path_to_dir: путь к дирректории в которой будут храниться блоки этого узла
         :param addr: идентификатор узла
         :param sign: подпись узла
@@ -19,6 +21,13 @@ class UsrNode:
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
         self.path_to_dir = os.path.abspath(path_to_dir)
+        self.mod = mod
+        if mod == Mod.Classic:
+            pass
+        elif mod == Mod.Modified:
+            self.allowed = True  # todo: continue
+        else:
+            raise RuntimeError(f"Unknown mod: {mod.name}")
         self.addr = addr
         self.sign = sign
         self.stg = stg
@@ -29,12 +38,13 @@ class UsrNode:
     def __del__(self):
         if self.inited and self.head:
             with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
-                json.dump({"head": self.head, "addr": self.addr, "sign": self.sign}, f)
+                json.dump({"head": self.head, "addr": self.addr, "sign": self.sign, "mod": self.mod.name}, f)
 
     @staticmethod
-    def load(path_to_dir, stg: StgNode):
+    def load(mod, path_to_dir, stg: StgNode):
         """
         Восстановление состояния узла-участника из файла
+        :param mod: режим работы
         :param path_to_dir: путь к дирректории
         :param stg:
         :return:
@@ -44,7 +54,7 @@ class UsrNode:
             raise RuntimeError(f"Could not load UsrNode: {path_to_dir} does not exist")
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as f:
             data = json.load(f)
-            node = UsrNode(path_to_dir, data['addr'], data['sign'], stg, data['head'])
+            node = UsrNode(mod, path_to_dir, data['addr'], data['sign'], stg, data['head'])
             return node
 
     def change_stg(self, new_stg):
@@ -68,19 +78,19 @@ class UsrNode:
         :param data: данные
         """
         assert self.inited
+        if self.mod == Mod.Classic:
+            self.__perform(recv_addr, data)
+        else:
+            self.__perform_mod(recv_addr, data)
+
+    def __perform(self, recv_addr: list, data: dict = None):
         tx = self.__create_tx(recv_addr, data)
         for receiver in self.stg.get_users(recv_addr):
             receiver.sign_tx(tx)
         block = self.__create_block(tx)
         self.stg.add_new_block(block)
 
-    def perform_modified(self, recv_addr: list, data: dict = None):
-        """
-        Первый этап работы blockmesh - взаимодействие
-        :param recv_addr: список получателей транзакции
-        :param data: данные
-        """
-        assert self.inited
+    def __perform_mod(self, recv_addr: list, data: dict = None):
         tx = self.__create_tx(recv_addr, data)
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:

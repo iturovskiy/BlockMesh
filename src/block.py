@@ -118,8 +118,10 @@ class Block:
                                                    'parents': self.parents}}), 'utf-8')).hexdigest()
 
     def __eq__(self, other):
-        return self.version == other.verson and self.timestamp == other.timestamp and \
-               tuple(self.parents) == tuple(other.parents) and self.tx == other.tx
+        return self.version == other.verson and \
+               self.timestamp == other.timestamp and \
+               tuple(self.parents) == tuple(other.parents) and \
+               self.tx == other.tx
 
     def set_parents(self, parents: dict):
         """

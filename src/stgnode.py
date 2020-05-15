@@ -1,8 +1,6 @@
 from src.block import *
-from src.usrnode import *
-from collections import Counter
-
-SHARED = []
+from src.usrnode import UsrNode, HEAD_FILE
+from model.model import Mod
 
 
 class StgNode:
@@ -10,25 +8,34 @@ class StgNode:
     Класс реализующий функционал узлов-хранилищ blockmesh сети
     """
 
-    def __init__(self, path_to_dir):
+    def __init__(self, mod: Mod, path_to_dir: str):
         """
+        :param mod: режим работы
         :param path_to_dir: путь к дирректории в которой будут храниться блоки этого узла
         """
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
         self.path_to_dir = os.path.abspath(path_to_dir)
+        self.mod = mod
+        if mod == Mod.Classic:
+            self.queue = []
+            self.shared_blocks = []
+        elif mod == Mod.Modified:
+            self.queue = {}
+            self.shared_blocks = {}
+        else:
+            raise RuntimeError(f"Unknown mod: {mod.name}")
         self.stg_list = []    # list of StgNodes
         self.user_map = {}    # addr and its UsrNode
         self.block_mesh = {}  # addr and its head
-        self.queue = []
-        self.block_count = 1
+        self.block_count = 1  # genesis at least
 
     def __del__(self):
         """
         Деструктор. Записывает состояние узла-хранилища в файл
         """
         with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
-            json.dump({'heads': self.block_mesh, 'queue': self.queue}, f)
+            json.dump({'Mod': self.mod.name, 'heads': self.block_mesh, 'queue': self.queue}, f)
 
     @staticmethod
     def load(path, stg_map, usr_map=None):
@@ -40,7 +47,13 @@ class StgNode:
         Принятие блока на обработку с целью добавить в блокмеш
         :param block:
         """
-        self.queue.append(block)
+        if self.mod == Mod.Classic:
+            self.queue.append(block)
+        else:
+            if block in self.queue:
+                self.queue[block] += 1
+            else:
+                self.queue[block] = 1
 
     def queue_len(self):
         return len(self.queue)
@@ -55,7 +68,6 @@ class StgNode:
         assert self.user_map[user.addr].head == user.head
         if user.addr not in self.block_mesh:
             self.block_mesh[user.addr] = user.head = GENESIS_BLOCK
-            # сообщить остальным о новом пользователе
             for stg in self.stg_list:
                 stg.block_mesh[user.addr] = GENESIS_BLOCK
         else:
@@ -71,78 +83,114 @@ class StgNode:
         """
         return True if block.approved is None else False
 
+    def send_block(self, block, count=None):
+        if self.mod == Mod.Classic:
+            self.shared_blocks.append(block)
+            for stg in self.stg_list:
+                stg.shared_blocks.append(block)
+        else:
+            if block in self.shared_blocks:
+                self.shared_blocks[block] += count
+            else:
+                self.shared_blocks[block] = count
+            for stg in self.stg_list:
+                if block in stg.shared_blocks:
+                    stg.shared_blocks[block] += count
+                else:
+                    stg.shared_blocks[block] = count
+
     def perform_step_1(self):
+        if self.mod == Mod.Classic:
+            self.__perform_step_1()
+        else:
+            self.__perform_step_1_mod()
+
+    def __perform_step_1(self):
         """
         Шаг 1 - "рассылка" блока для консенсуса
         """
-        global SHARED
         while self.queue:
-            block = self.queue.pop(0)
+            block = self.queue[0]
             if self.check_block(block) is False:
                 block.approved = False
                 self.user_map[block.sender()].receive_from_stg(block)
+                self.queue.pop(0)
                 continue
-            SHARED.append((block, self))
+            self.send_block(block)
             return
 
-    @staticmethod
-    def perform_step_2():
+    def __perform_step_1_mod(self):
         """
-        Шаг 2 - конфликтующие транзакции откладываются на следующую итерацию
+        Шаг 1 - "рассылка" блока для консенсуса
         """
-        global SHARED
-        if not SHARED:
+        while self.queue:
+            block, count = list(self.queue.items())[0]
+            if self.check_block(block) is False:
+                block.approved = False
+                self.user_map[block.sender()].receive_from_stg(block)
+                self.queue.pop(block)
+                continue
+            self.send_block(block, count)
             return
-        SHARED.sort(key=lambda b: b[0].timestamp)
+
+    def perform_step_2(self):
+        if self.mod == Mod.Classic:
+            self.__perform_step_2()
+        else:
+            self.__perform_step_2_mod()
+
+    def __perform_step_2(self):
+        """
+        Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
+        """
+        if not self.shared_blocks:
+            return
+        self.shared_blocks.sort(key=lambda b: b.timestamp)
         participants = {}
-        for index, block, stg in enumerate(SHARED):
-            users = block.participans()
-            for user in users:
-                if user in participants:
-                    # откладываем транзакцию
-                    stg.queue.insert(0, block)
-                    SHARED.pop(index)
-                    break
-
-    @staticmethod
-    def perform_step_2_modified():
-        """
-        Шаг 2 модифицированный
-        """
-        global SHARED
-        if not SHARED:
-            return
-        uniques = {}
-        for b, stg in SHARED:
-            if b not in uniques:
-                uniques[b] = [1, [stg]]
-            else:
-                uniques[b][0] += 1
-                uniques[b][1].append(stg)
-        # todo: continue
-
-    def perform_step_3(self):
-        """
-        Шаг 3 - внедрение в блокмеш
-        """
-        global SHARED
-        for block, _ in SHARED:
-            users = block.participants()
-            block.set_parents({usr: self.block_mesh[usr] for usr in users})
-            fname = block.save(self.path_to_dir)
-            for user in users:
-                self.block_mesh[user] = fname
-                if user in self.user_map:
-                    self.user_map[user].receive_from_stg(block)
+        while self.shared_blocks:
+            block = self.shared_blocks.pop(0)
+            if not self.__check_and_insert(block, participants):
+                continue
+            if self.queue and block == self.queue[0]:
+                self.queue.pop(0)
             self.block_count += 1
 
-    @staticmethod
-    def perform_step_4():
+    def __perform_step_2_mod(self):
         """
-        Шаг 4
+        Шаг 2 - Модифицированный. Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
         """
-        global SHARED
-        SHARED.clear()
+        if not self.shared_blocks:
+            return
+        blocks = list(self.shared_blocks.keys())
+        blocks.sort(key=lambda b: b.timestamp)
+        participants = {}
+        while blocks:
+            block = blocks.pop(0)
+            count = self.shared_blocks.pop(block)
+            if len(block.participants()) != count:
+                print(f"Got participants: {len(block.participants())}. Expected: {count}")
+                continue
+            if not self.__check_and_insert(block, participants):
+                continue
+            if self.queue and block == list(self.queue.keys())[0]:
+                self.queue.pop(block)
+            self.block_count += 1
+
+    def __check_and_insert(self, block, participants):
+        # проверка
+        users = block.participants()
+        for user in users:
+            if user in participants:
+                return False
+        participants.update(users)
+        # внедрение в блокмеш
+        block.set_parents({usr: self.block_mesh[usr] for usr in users})
+        fname = block.save(self.path_to_dir)
+        for user in users:
+            self.block_mesh[user] = fname
+            if user in self.user_map:
+                self.user_map[user].receive_from_stg(block)
+        return True
 
     def get_users(self, users):
         """
