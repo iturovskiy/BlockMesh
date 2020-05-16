@@ -18,16 +18,16 @@ class UsrNode:
         :param sign: подпись узла
         :param stg: узел-хранилище через который будет обеспечиваться взаимодействие с другими участниками
         """
+        if mod == Mod.Classic:
+            self.allowed = None
+        elif mod == Mod.Modified:
+            self.allowed = True
+        else:
+            raise RuntimeError(f"Unknown mod: {mod.name}")
+        self.mod = mod
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
         self.path_to_dir = os.path.abspath(path_to_dir)
-        self.mod = mod
-        if mod == Mod.Classic:
-            pass
-        elif mod == Mod.Modified:
-            self.allowed = True  # todo: continue
-        else:
-            raise RuntimeError(f"Unknown mod: {mod.name}")
         self.addr = addr
         self.sign = sign
         self.stg = stg
@@ -80,7 +80,7 @@ class UsrNode:
         assert self.inited
         if self.mod == Mod.Classic:
             self.__perform(recv_addr, data)
-        else:
+        elif self.mod == Mod.Modified:
             self.__perform_mod(recv_addr, data)
 
     def __perform(self, recv_addr: list, data: dict = None):
@@ -91,6 +91,9 @@ class UsrNode:
         self.stg.add_new_block(block)
 
     def __perform_mod(self, recv_addr: list, data: dict = None):
+        if not self.allowed:
+            print(f"Not allowed yet to gen new transaction: {self.addr}")
+            return
         tx = self.__create_tx(recv_addr, data)
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:
@@ -99,6 +102,7 @@ class UsrNode:
         self.stg.add_new_block(block)
         for receiver in receivers:
             receiver.stg.add_new_block(block)
+        self.allowed = False
 
     def receive_from_stg(self, block: Block):
         """
@@ -107,6 +111,8 @@ class UsrNode:
         """
         if block.approved and self.check_chain(block):
             self.head = block.save(self.path_to_dir)
+            if self.mod == Mod.Modified and self.addr == block.sender():
+                self.allowed = True
 
     def check_chain(self, block: Block):
         """

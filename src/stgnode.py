@@ -13,10 +13,6 @@ class StgNode:
         :param mod: режим работы
         :param path_to_dir: путь к дирректории в которой будут храниться блоки этого узла
         """
-        if not os.path.abspath(path_to_dir):
-            os.makedirs(path_to_dir)
-        self.path_to_dir = os.path.abspath(path_to_dir)
-        self.mod = mod
         if mod == Mod.Classic:
             self.queue = []
             self.shared_blocks = []
@@ -25,6 +21,10 @@ class StgNode:
             self.shared_blocks = {}
         else:
             raise RuntimeError(f"Unknown mod: {mod.name}")
+        self.mod = mod
+        if not os.path.abspath(path_to_dir):
+            os.makedirs(path_to_dir)
+        self.path_to_dir = os.path.abspath(path_to_dir)
         self.stg_list = []    # list of StgNodes
         self.user_map = {}    # addr and its UsrNode
         self.block_mesh = {}  # addr and its head
@@ -42,21 +42,28 @@ class StgNode:
         # todo: load for stg
         pass
 
+    # todo: посчитать узловые блоки!!!
+
+    def participants_bm(self):
+        return len(self.block_mesh)
+
+    def queue_len(self):
+        return len(self.queue) if self.mod == Mod.Classic else sum(self.queue.values())
+
     def add_new_block(self, block: Block):
         """
         Принятие блока на обработку с целью добавить в блокмеш
-        :param block:
+        :param block: блок блокмеша
         """
         if self.mod == Mod.Classic:
             self.queue.append(block)
-        else:
+        elif self.mod == Mod.Modified:
             if block in self.queue:
                 self.queue[block] += 1
             else:
                 self.queue[block] = 1
-
-    def queue_len(self):
-        return len(self.queue)
+        else:
+            raise RuntimeError("WTF - add new block")
 
     def add_new_user(self, user: UsrNode):
         """
@@ -88,7 +95,8 @@ class StgNode:
             self.shared_blocks.append(block)
             for stg in self.stg_list:
                 stg.shared_blocks.append(block)
-        else:
+        elif self.mod == Mod.Modified:
+            # возможны ошибки
             if block in self.shared_blocks:
                 self.shared_blocks[block] += count
             else:
@@ -98,17 +106,21 @@ class StgNode:
                     stg.shared_blocks[block] += count
                 else:
                     stg.shared_blocks[block] = count
+        else:
+            raise RuntimeError("WTF - send block")
 
     def perform_step_1(self):
-        if self.mod == Mod.Classic:
-            self.__perform_step_1()
-        else:
-            self.__perform_step_1_mod()
-
-    def __perform_step_1(self):
         """
         Шаг 1 - "рассылка" блока для консенсуса
         """
+        if self.mod == Mod.Classic:
+            self.__perform_step_1()
+        elif self.mod == Mod.Modified:
+            self.__perform_step_1_mod()
+        else:
+            raise RuntimeError("WTF - perform step 1")
+
+    def __perform_step_1(self):
         while self.queue:
             block = self.queue[0]
             if self.check_block(block) is False:
@@ -120,9 +132,6 @@ class StgNode:
             return
 
     def __perform_step_1_mod(self):
-        """
-        Шаг 1 - "рассылка" блока для консенсуса
-        """
         while self.queue:
             block, count = list(self.queue.items())[0]
             if self.check_block(block) is False:
@@ -134,15 +143,17 @@ class StgNode:
             return
 
     def perform_step_2(self):
-        if self.mod == Mod.Classic:
-            self.__perform_step_2()
-        else:
-            self.__perform_step_2_mod()
-
-    def __perform_step_2(self):
         """
         Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
         """
+        if self.mod == Mod.Classic:
+            self.__perform_step_2()
+        elif self.mod == Mod.Modified:
+            self.__perform_step_2_mod()
+        else:
+            raise RuntimeError("WTF - perform step 1")
+
+    def __perform_step_2(self):
         if not self.shared_blocks:
             return
         self.shared_blocks.sort(key=lambda b: b.timestamp)
@@ -156,9 +167,6 @@ class StgNode:
             self.block_count += 1
 
     def __perform_step_2_mod(self):
-        """
-        Шаг 2 - Модифицированный. Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
-        """
         if not self.shared_blocks:
             return
         blocks = list(self.shared_blocks.keys())
