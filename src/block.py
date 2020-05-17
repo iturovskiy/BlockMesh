@@ -43,6 +43,9 @@ class Transaction:
     def __eq__(self, other):
         return self.sender == other.sender and self.participants == other.participants and self.data == other.data
 
+    def __str__(self):
+        return f"[TX: {self.dumps()}]"
+
     @staticmethod
     def load(sdata):
         """
@@ -62,8 +65,10 @@ class Transaction:
         :param addr: адрес получателя
         :param sign: подпись получателя
         """
-        assert addr in self.participants
-        assert self.participants[addr] == NOT_SIGNED
+        if addr not in self.participants:
+            raise RuntimeError(f"'{addr}' could not sign {str(self)}")
+        if self.participants[addr] != NOT_SIGNED:
+            raise RuntimeError(f"'{addr}' already signed -> {addr}: {self.participants[addr]}")
         self.participants[addr] = sign
 
     def is_ready(self):
@@ -83,7 +88,7 @@ class Transaction:
         """
         return tuple(self.participants.keys())
 
-    def json(self):
+    def dumps(self):
         """
         :return: json объект класса
         """
@@ -123,6 +128,9 @@ class Block:
                tuple(self.parents) == tuple(other.parents) and \
                self.tx == other.tx
 
+    def __str__(self):
+        return f"[Block: {self.dumps()}]"
+
     def set_parents(self, parents: dict):
         """
         :param parents: dict адрес - хэш
@@ -147,14 +155,15 @@ class Block:
         return json.dumps({'header': {'version': self.version,
                                       'timestamp': self.timestamp,
                                       'parents': self.parents},
-                           'transaction': self.tx.json()})
+                           'transaction': self.tx.dumps()})
 
     def save(self, path_to_dir):
         """
         Запись блока транзакции в файл
         :param path_to_dir: путь до файла
         """
-        assert self.tx.is_ready()
+        if not self.tx.is_ready():
+            raise RuntimeError(f"WTF - block is not ready")
         if not self.approved or self.approved is False:
             raise RuntimeError(f"Block {self} is not approved and can't be saved")
         if not os.path.abspath(path_to_dir):

@@ -66,7 +66,8 @@ class UsrNode:
         :param tx: Транзакция
         :return: хэш родительского блока
         """
-        assert self.inited
+        if not self.inited:
+            raise RuntimeError("UsrNode not inited in his StgNode")
         tx.sign(self.addr, self.sign)
         return self.head
 
@@ -76,7 +77,8 @@ class UsrNode:
         :param recv_addr: список получателей транзакции
         :param data: данные
         """
-        assert self.inited
+        if not self.inited:
+            raise RuntimeError("UsrNode not inited in his StgNode")
         if self.mod == Mod.Classic:
             self.__perform(recv_addr, data)
         elif self.mod == Mod.Modified:
@@ -115,10 +117,13 @@ class UsrNode:
 
     def check_chain(self, block: Block):
         """
-        :param block:
-        :return:
+        Проверка локальной цепочки блокмеш
+        :param block: блок внедряемый в локальную цепочку
+        :return: Bool
         """
-        assert block.parents[self.addr] == self.head
+        if block.parents[self.addr] != self.head:
+            raise RuntimeError(f"Check chain error:[ Block parent hash: {block.parents[self.addr]} "
+                               f"!= Usr parent hash: {self.head} ]")
         parent_hash = self.head
         while parent_hash != GENESIS_BLOCK:
             try:
@@ -145,5 +150,6 @@ class UsrNode:
         :param tx: транзакция
         :return: Блок транзакции - Block
         """
-        assert tx.sender == self.addr
+        if tx.sender != self.addr:
+            raise RuntimeError(f"Tx sender {tx.sender} != self addr {self.addr}")
         return Block(tx, time.time_ns())

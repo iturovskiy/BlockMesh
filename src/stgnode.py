@@ -104,7 +104,8 @@ class StgNode:
         """
         if user.addr not in self.user_map:
             self.user_map[user.addr] = user
-        assert self.user_map[user.addr].head == user.head
+        if self.user_map[user.addr].head != user.head:
+            raise RuntimeError(f"Usr HEAD: {self.user_map[user.addr].head} != new Usr HEAD: {user.head}")
         if user.addr not in self.block_mesh:
             self.block_mesh[user.addr] = user.head = GENESIS_BLOCK
             for stg in self.stg_list:
@@ -150,7 +151,8 @@ class StgNode:
         :param users: список адресов
         :return: список UsrNode
         """
-        assert users
+        if not users:
+            raise RuntimeError(f"Unable to get users - empty")
         return [self.__request_user(user) for user in users]
 
     def __perform_step_1(self):

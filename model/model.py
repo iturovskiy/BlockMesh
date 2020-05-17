@@ -25,10 +25,8 @@ class Model:
         :param duration_2:
         :param activity:
         """
-        assert activity > 0  # когда лень писать обработку ошибок)))
-        assert activity <= 1
-        assert usr_num >= stg_num
-        assert duration_1 >= duration_2
+        if activity > 1 or activity < 0:
+            raise RuntimeError(f"Wrong activity param: {activity}. Should be in (0..1)")
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
         self.path = os.path.abspath(path_to_dir)
