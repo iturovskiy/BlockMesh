@@ -41,23 +41,22 @@ class UsrNode:
                 json.dump({"head": self.head, "addr": self.addr, "sign": self.sign, "mod": self.mod.name}, f)
 
     @staticmethod
-    def load(mod, path_to_dir, stg: StgNode):
+    def load(path_to_dir, stg: StgNode):
         """
         Восстановление состояния узла-участника из файла
-        :param mod: режим работы
         :param path_to_dir: путь к дирректории
-        :param stg:
-        :return:
+        :param stg: Узел-хранилище
+        :return: UsrNode
         """
         path_to_dir = os.path.abspath(path_to_dir)
         if path_to_dir is None:
             raise RuntimeError(f"Could not load UsrNode: {path_to_dir} does not exist")
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as f:
             data = json.load(f)
-            node = UsrNode(mod, path_to_dir, data['addr'], data['sign'], stg, data['head'])
+            node = UsrNode(Mod[data['mod']], path_to_dir, data['addr'], data['sign'], stg, data['head'])
             return node
 
-    def change_stg(self, new_stg):
+    def change_stg(self, new_stg: StgNode):
         # todo: сделать позже
         pass
 

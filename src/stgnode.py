@@ -34,20 +34,52 @@ class StgNode:
         """
         Деструктор. Записывает состояние узла-хранилища в файл
         """
-        with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
-            json.dump({'Mod': self.mod.name, 'heads': self.block_mesh, 'queue': self.queue}, f)
+        with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as file:
+            json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': self.queue, "blocks": self.block_count},
+                      file)
 
     @staticmethod
-    def load(path, stg_map, usr_map=None):
-        # todo: load for stg
-        pass
+    def load(path_to_dir, stg_list, usr_map=None):
+        """
+        Восстановление состояния узла-хранилища из файла
+        :param path_to_dir: путь к дирректории
+        :param usr_map: словарь {адрес узла-участника: узел участник}
+        :param stg_list: список узлов хранилищ
+        :return: StgNode
+        """
+        path_to_dir = os.path.abspath(path_to_dir)
+        if path_to_dir is None:
+            raise RuntimeError(f"Could not load StgNode: {path_to_dir} does not exist")
+        with open(os.path.join(path_to_dir, HEAD_FILE), "r") as file:
+            data = json.load(file)
+            stg = StgNode(Mod[data['mod']], path_to_dir)
+            stg.block_mesh = data['heads']
+            stg.queue = data['queue']
+            stg.stg_list = stg_list
+            stg.user_map = usr_map
+            stg.block_count = data['blocks']
+            for other_stg in stg_list:
+                other_stg.stg_list.append(stg)
+            return stg
 
     # todo: посчитать узловые блоки!!!
 
-    def participants_bm(self):
+    def global_bm_participants(self):
+        """
+        :return: Количество участников сети блокмеш
+        """
         return len(self.block_mesh)
 
+    def local_bm_participants(self):
+        """
+        :return: Количество локальных узлов-участников сети блокмеш
+        """
+        return len(self.user_map)
+
     def queue_len(self):
+        """
+        :return: Количество блоков в очереди на добавление в блокмеш
+        """
         return len(self.queue) if self.mod == Mod.Classic else sum(self.queue.values())
 
     def add_new_block(self, block: Block):
@@ -90,7 +122,60 @@ class StgNode:
         """
         return True if block.approved is None else False
 
-    def send_block(self, block, count=None):
+    def perform_step_1(self):
+        """
+        Шаг 1 - "рассылка" блока для консенсуса
+        """
+        if self.mod == Mod.Classic:
+            self.__perform_step_1()
+        elif self.mod == Mod.Modified:
+            self.__perform_step_1_mod()
+        else:
+            raise RuntimeError("WTF - perform step 1")
+
+    def perform_step_2(self):
+        """
+        Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
+        """
+        if self.mod == Mod.Classic:
+            self.__perform_step_2()
+        elif self.mod == Mod.Modified:
+            self.__perform_step_2_mod()
+        else:
+            raise RuntimeError("WTF - perform step 2")
+
+    def get_users(self, users):
+        """
+        Запрос на взаимодействие с другими узлами-участниками
+        :param users: список адресов
+        :return: список UsrNode
+        """
+        assert users
+        return [self.__request_user(user) for user in users]
+
+    def __perform_step_1(self):
+        while self.queue:
+            block = self.queue[0]
+            if self.check_block(block) is False:
+                block.approved = False
+                self.user_map[block.sender()].receive_from_stg(block)
+                self.queue.pop(0)
+                continue
+            self.__block_sending(block)
+            return
+
+    def __perform_step_1_mod(self):
+        while self.queue:
+            block, count = list(self.queue.items())[0]
+            if self.check_block(block) is False:
+                block.approved = False
+                self.user_map[block.sender()].receive_from_stg(block)
+                self.queue.pop(block)
+                continue
+            self.__block_sending(block, count)
+            return
+
+    def __block_sending(self, block, count=None):
         if self.mod == Mod.Classic:
             self.shared_blocks.append(block)
             for stg in self.stg_list:
@@ -108,50 +193,6 @@ class StgNode:
                     stg.shared_blocks[block] = count
         else:
             raise RuntimeError("WTF - send block")
-
-    def perform_step_1(self):
-        """
-        Шаг 1 - "рассылка" блока для консенсуса
-        """
-        if self.mod == Mod.Classic:
-            self.__perform_step_1()
-        elif self.mod == Mod.Modified:
-            self.__perform_step_1_mod()
-        else:
-            raise RuntimeError("WTF - perform step 1")
-
-    def __perform_step_1(self):
-        while self.queue:
-            block = self.queue[0]
-            if self.check_block(block) is False:
-                block.approved = False
-                self.user_map[block.sender()].receive_from_stg(block)
-                self.queue.pop(0)
-                continue
-            self.send_block(block)
-            return
-
-    def __perform_step_1_mod(self):
-        while self.queue:
-            block, count = list(self.queue.items())[0]
-            if self.check_block(block) is False:
-                block.approved = False
-                self.user_map[block.sender()].receive_from_stg(block)
-                self.queue.pop(block)
-                continue
-            self.send_block(block, count)
-            return
-
-    def perform_step_2(self):
-        """
-        Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
-        """
-        if self.mod == Mod.Classic:
-            self.__perform_step_2()
-        elif self.mod == Mod.Modified:
-            self.__perform_step_2_mod()
-        else:
-            raise RuntimeError("WTF - perform step 1")
 
     def __perform_step_2(self):
         if not self.shared_blocks:
@@ -199,15 +240,6 @@ class StgNode:
             if user in self.user_map:
                 self.user_map[user].receive_from_stg(block)
         return True
-
-    def get_users(self, users):
-        """
-        Запрос на взаимодействие с другими узлами-участниками
-        :param users: список адресов
-        :return: список UsrNode
-        """
-        assert users
-        return [self.__request_user(user) for user in users]
 
     def __request_user(self, user):
         if user in self.user_map:
