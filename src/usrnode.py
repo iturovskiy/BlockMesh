@@ -36,6 +36,9 @@ class UsrNode:
         stg.connect_user(self)
 
     def save(self):
+        """
+        Сохранить состояние узла в HEAD-файл
+        """
         if not self.inited or not self.head:
             raise RuntimeError(f"Unable to save {self.addr} UsrNode: "
                                f"not inited [{self.inited}] or has no head [{self.head}]")
@@ -59,6 +62,10 @@ class UsrNode:
             return node
 
     def change_stg(self, new_stg: StgNode):
+        """
+        Сменить узе-хранилище
+        :param new_stg: узел-хранилище
+        """
         if self.stg.available:
             print(f"Usr {self.addr} was not changed his Stg -> still available")
             return

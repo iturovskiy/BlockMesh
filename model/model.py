@@ -11,12 +11,14 @@ class Mod(Enum):
     Modified = 2
 
 
+# os.getcwd()
 class Model:
     """
     Класс реализующий функионал модели протокола блокмеш
     """
 
-    def __init__(self, mod: Mod, path_to_dir: str, stg_num: int, usr_num: int, duration_1: int, duration_2: int, activity: float):
+    def __init__(self, mod: Mod, path_to_dir: str, stg_num: int, usr_num: int,
+                 duration_1: int, duration_2: int, activity: float):
         """
         :param path_to_dir:
         :param stg_num:

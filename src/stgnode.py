@@ -33,7 +33,7 @@ class StgNode:
 
     def save(self):
         """
-        Запись состояния узла-хранилища в файл
+        Запись состояния узла-хранилища в HEAD-файл
         """
         with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as file:
             json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': self.queue, "blocks": self.block_count},
@@ -325,11 +325,11 @@ class StgNode:
         raise RuntimeError(f"There is no such user: {user}")
 
     def __index_blocks(self):
-        index = set()
+        index = {GENESIS_BLOCK}
         queue = list(set(self.block_mesh.values()))
         while queue:
             block_id = queue.pop(0)
-            if block_id == GENESIS_BLOCK or block_id in index:
+            if block_id in index:
                 continue
             block = self.load_block(block_id)
             queue.extend(list(set(block.parents.values())))
