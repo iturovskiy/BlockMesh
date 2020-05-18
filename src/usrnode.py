@@ -19,9 +19,9 @@ class UsrNode:
         :param stg: узел-хранилище через который будет обеспечиваться взаимодействие с другими участниками
         """
         if mod == Mod.Classic:
-            self.allowed = None
+            self.generation_allowed = None
         elif mod == Mod.Modified:
-            self.allowed = True
+            self.generation_allowed = True
         else:
             raise RuntimeError(f"Unknown mod: {mod.name}")
         self.mod = mod
@@ -33,12 +33,14 @@ class UsrNode:
         self.stg = stg
         self.inited = False
         self.head = head
-        stg.add_new_user(self)
+        stg.connect_user(self)
 
-    def __del__(self):
-        if self.inited and self.head:
-            with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
-                json.dump({"head": self.head, "addr": self.addr, "sign": self.sign, "mod": self.mod.name}, f)
+    def save(self):
+        if not self.inited or not self.head:
+            raise RuntimeError(f"Unable to save {self.addr} UsrNode: "
+                               f"not inited [{self.inited}] or has no head [{self.head}]")
+        with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
+            json.dump({"head": self.head, "addr": self.addr, "sign": self.sign, "mod": self.mod.name}, f)
 
     @staticmethod
     def load(path_to_dir, stg: StgNode):
@@ -57,8 +59,12 @@ class UsrNode:
             return node
 
     def change_stg(self, new_stg: StgNode):
-        # todo: сделать позже
-        pass
+        if self.stg.available:
+            print(f"Usr {self.addr} was not changed his Stg -> still available")
+            return
+        self.stg.disconnect_user(self)
+        self.stg = new_stg
+        self.stg.connect_user(self)
 
     def sign_tx(self, tx: Transaction):
         """
@@ -92,7 +98,7 @@ class UsrNode:
         self.stg.add_new_block(block)
 
     def __perform_mod(self, recv_addr: list, data: dict = None):
-        if not self.allowed:
+        if not self.generation_allowed:
             print(f"Not allowed yet to gen new transaction: {self.addr}")
             return
         tx = self.__create_tx(recv_addr, data)
@@ -103,7 +109,7 @@ class UsrNode:
         self.stg.add_new_block(block)
         for receiver in receivers:
             receiver.stg.add_new_block(block)
-        self.allowed = False
+        self.generation_allowed = False
 
     def receive_from_stg(self, block: Block):
         """
@@ -113,7 +119,7 @@ class UsrNode:
         if block.approved and self.check_chain(block):
             self.head = block.save(self.path_to_dir)
             if self.mod == Mod.Modified and self.addr == block.sender():
-                self.allowed = True
+                self.generation_allowed = True
 
     def check_chain(self, block: Block):
         """
@@ -151,5 +157,5 @@ class UsrNode:
         :return: Блок транзакции - Block
         """
         if tx.sender != self.addr:
-            raise RuntimeError(f"Tx sender {tx.sender} != self addr {self.addr}")
+            raise RuntimeError(f"TxSenderAddr {tx.sender} != UsrAddr {self.addr}")
         return Block(tx, time.time_ns())
