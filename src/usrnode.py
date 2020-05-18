@@ -77,6 +77,35 @@ class UsrNode:
         tx.sign(self.addr, self.sign)
         return self.head
 
+    def receive_from_stg(self, block: Block):
+        """
+        Продолжение второго этапа работы blockmesh - внедрение блока
+        :param block: блок для внедрения в локальную цепочку
+        """
+        if block.approved and self.check_chain(block):
+            self.head = block.save(self.path_to_dir)
+            if self.mod == Mod.Modified and self.addr == block.sender():
+                self.generation_allowed = True
+
+    def check_chain(self, block: Block):
+        """
+        Проверка локальной цепочки блокмеш
+        :param block: блок внедряемый в локальную цепочку
+        :return: Bool
+        """
+        if block.parents[self.addr] != self.head:
+            raise RuntimeError(f"Check chain error:[ Block parent hash: {block.parents[self.addr]} "
+                               f"!= Usr parent hash: {self.head} ]")
+        parent_hash = self.head
+        while parent_hash != GENESIS_BLOCK:
+            try:
+                read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
+            except Exception as e:
+                print(e)
+                return False
+            parent_hash = read_block.parents[self.addr]
+        return True
+
     def perform(self, recv_addr: list, data: dict = None):
         """
         Первый этап работы blockmesh - взаимодействие
@@ -110,35 +139,6 @@ class UsrNode:
         for receiver in receivers:
             receiver.stg.add_new_block(block)
         self.generation_allowed = False
-
-    def receive_from_stg(self, block: Block):
-        """
-        Продолжение второго этапа работы blockmesh - внедрение блока
-        :param block: блок для внедрения в локальную цепочку
-        """
-        if block.approved and self.check_chain(block):
-            self.head = block.save(self.path_to_dir)
-            if self.mod == Mod.Modified and self.addr == block.sender():
-                self.generation_allowed = True
-
-    def check_chain(self, block: Block):
-        """
-        Проверка локальной цепочки блокмеш
-        :param block: блок внедряемый в локальную цепочку
-        :return: Bool
-        """
-        if block.parents[self.addr] != self.head:
-            raise RuntimeError(f"Check chain error:[ Block parent hash: {block.parents[self.addr]} "
-                               f"!= Usr parent hash: {self.head} ]")
-        parent_hash = self.head
-        while parent_hash != GENESIS_BLOCK:
-            try:
-                read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
-            except Exception as e:
-                print(e)
-                return False
-            parent_hash = read_block.parents[self.addr]
-        return True
 
     def __create_tx(self, receivers: list, data: dict = None):
         """

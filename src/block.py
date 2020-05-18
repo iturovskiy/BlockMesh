@@ -118,6 +118,7 @@ class Block:
         self.approved = None
 
     def __hash__(self):
+        # возможны ошибки int(..., 16)
         return sha256(bytes(json.dumps({'header': {'version': self.version,
                                                    'timestamp': self.timestamp,
                                                    'parents': self.parents}}), 'utf-8')).hexdigest()
