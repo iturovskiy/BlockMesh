@@ -1,6 +1,7 @@
 import os
 from blockmesh.node import *
 from shutil import rmtree
+from blockmesh.model import ModelTime
 
 
 def test_simple(mod):
@@ -33,6 +34,16 @@ def test_simple(mod):
         s.save()
     for u in usr:
         u.save()
+
+
+def test_unavail(mod):
+    t = ModelTime()
+    pwd = os.path.join(os.getcwd(), f'test_unavail_{mod.name}')
+    try:
+        rmtree(pwd)
+    except FileNotFoundError:
+        pass
+    # todo: today
 
 
 if __name__ == '__main__':

@@ -1,14 +1,10 @@
-from enum import Enum
 import blockmesh.node as node
+import json
 import os
 
 STG_DIR = r'Storages'
 USR_DIR = r'Users'
-
-
-class Mod(Enum):
-    Classic = 1
-    Modified = 2
+MOD_F = r'MODEL'
 
 
 class ModelTime:
@@ -18,7 +14,8 @@ class ModelTime:
 
     def __init__(self, start_time: int = 1, step: int = 1):
         """
-        :param start_time:
+        :param start_time: начальное время
+        :param step: шаг времени
         """
         if start_time < 1:
             raise ValueError("Start time must be > 0")
@@ -27,9 +24,18 @@ class ModelTime:
         self.time = start_time
         self.step = step
 
+    def dumps(self):
+        return json.dumps({"time": self.time, "step": self.step})
+
+    @staticmethod
+    def loads(data):
+        data = json.loads(data)
+        return ModelTime(data["time"], data["step"])
+
     def tick(self, mul: int = 1):
         """
         Увеличить время
+        :type mul: мультипликор
         """
         if mul < 1:
             raise ValueError("Multiplier must be > 0")
@@ -41,7 +47,7 @@ class Model:
     Класс реализующий функионал модели протокола блокмеш
     """
 
-    def __init__(self, mod: Mod, path_to_dir: str, stg_num: int, usr_num: int,
+    def __init__(self, mod: node.Mod, path_to_dir: str, stg_num: int, usr_num: int,
                  duration_1: int, duration_2: int, activity: float):
         """
         :param path_to_dir:
@@ -67,15 +73,33 @@ class Model:
         self.model_time = ModelTime()
 
     def save(self):
-        pass
+        for s in self.stgs:
+            s.save()
+        for u in self.usrs:
+            u.save()
+        with open(os.path.join(self.path, MOD_F), 'w') as out:
+            json.dump({"num": [self.stg_num, self.usr_num],
+                       "dur": [self.duration_1, self.duration_2],
+                       "activity:": self.usr_activity,
+                       "time_s": self.model_time.dumps()}, out)
 
     @staticmethod
     def load(path_to_dir):
+        # todo: today
         pass
 
-    def perform(self, rounds: int, mod: Mod, failures: dict = None):
+    def perform(self, rounds: int, failures: dict = None):
         for round in range(rounds):
             # расчкт сколько пользователей отвзаимодействовало
             for current_time in range(self.duration_1):
                 # 
                 pass
+            self.__stg_step()
+
+    def __stg_step(self):
+        for i in range(self.duration_2):
+            self.model_time.tick()
+            for s in self.stgs:
+                s.perform_step_1()
+            for s in self.stgs:
+                s.perform_step_2()

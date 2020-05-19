@@ -1,5 +1,5 @@
 from blockmesh.block import *
-from blockmesh.model import Mod, ModelTime
+from enum import Enum
 
 HEAD_FILE = "HEAD"
 
@@ -11,6 +11,14 @@ def mkdir(path_to_dir):
     if not os.path.isdir(path_to_dir):
         os.makedirs(path_to_dir)
     return path_to_dir
+
+
+class Mod(Enum):
+    """
+    Режимы работы узлов и протокола блокмеш
+    """
+    Classic = 1
+    Modified = 2
 
 
 class Storage:
@@ -75,6 +83,9 @@ class Storage:
             return stg
 
     def get_time(self):
+        """
+        :return: Серверное время
+        """
         return self.timeserver.time
 
     def join_bm(self, other_stg):

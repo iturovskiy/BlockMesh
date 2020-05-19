@@ -1,6 +1,5 @@
 import json
 import os.path
-import time
 from hashlib import sha256
 
 NOT_SIGNED = None
@@ -118,9 +117,9 @@ class Block:
         self.approved = None
 
     def __hash__(self):
-        return int(self.shash(), 16)
+        return int(self.hashs(), 16)
 
-    def shash(self):
+    def hashs(self):
         return sha256(bytes(json.dumps({'header': {'version': self.version,
                                                    'timestamp': self.timestamp,
                                                    'parents': self.parents}}), 'utf-8')).hexdigest()
@@ -163,6 +162,11 @@ class Block:
 
     @staticmethod
     def loads(data):
+        """
+        Чтение блока транзакции из строки
+        :param data: строка содержащая дамп Block
+        :return: Block
+        """
         data = json.loads(data)
         block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
         block.version = data['header']['version']
@@ -180,7 +184,7 @@ class Block:
             raise RuntimeError(f"Block {self} is not approved and can't be saved")
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
-        fname = self.shash()
+        fname = self.hashs()
         with open(os.path.join(path_to_dir, fname), "w") as out:
             out.write(self.dumps())
         return fname
