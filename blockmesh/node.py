@@ -1,17 +1,28 @@
-from src.block import *
-from src.usrnode import UsrNode, HEAD_FILE
-from model.model import Mod
+from blockmesh.block import *
+from blockmesh.model import Mod, ModelTime
+
+HEAD_FILE = "HEAD"
 
 
-class StgNode:
+def mkdir(path_to_dir):
+    path_to_dir = os.path.abspath(path_to_dir)
+    if not path_to_dir:
+        raise NotADirectoryError(f"Not a dir: {path_to_dir}")
+    if not os.path.isdir(path_to_dir):
+        os.makedirs(path_to_dir)
+    return path_to_dir
+
+
+class Storage:
     """
     Класс реализующий функционал узлов-хранилищ blockmesh сети
     """
 
-    def __init__(self, mod: Mod, path_to_dir: str):
+    def __init__(self, mod: Mod, path_to_dir: str, timeserver):
         """
         :param mod: режим работы
         :param path_to_dir: путь к дирректории в которой будут храниться блоки этого узла
+        :type timeserver:
         """
         if mod == Mod.Classic:
             self.queue = []
@@ -20,30 +31,30 @@ class StgNode:
             self.queue = {}
             self.shared_blocks = {}
         else:
-            raise RuntimeError(f"Unknown mod: {mod.name}")
+            raise ValueError(f"Unknown mod: {mod.name}")
         self.mod = mod
-        if not os.path.abspath(path_to_dir):
-            os.makedirs(path_to_dir)
-        self.path_to_dir = os.path.abspath(path_to_dir)
+        self.path_to_dir = mkdir(path_to_dir)
         self.stg_list = []    # list of StgNodes
         self.user_map = {}    # addr and its UsrNode
         self.block_mesh = {}  # addr and its head
         self.block_count = 1  # genesis at least
         self.available = True
+        self.timeserver = timeserver
 
     def save(self):
         """
         Запись состояния узла-хранилища в HEAD-файл
         """
         with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as file:
-            json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': self.queue, "blocks": self.block_count},
-                      file)
+            json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': [b.dumps() for b in self.queue],
+                       "blocks": self.block_count}, file)
 
     @staticmethod
-    def load(path_to_dir, stg_list, usr_map=None):
+    def load(path_to_dir, timeserver, stg_list, usr_map=None):
         """
         Восстановление состояния узла-хранилища из файла
         :param path_to_dir: путь к дирректории
+        :param timeserver:
         :param usr_map: словарь {адрес узла-участника: узел участник}
         :param stg_list: список узлов хранилищ
         :return: StgNode
@@ -53,9 +64,9 @@ class StgNode:
             raise RuntimeError(f"Could not load StgNode: {path_to_dir} does not exist")
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as file:
             data = json.load(file)
-            stg = StgNode(Mod[data['mod']], path_to_dir)
+            stg = Storage(Mod[data['mod']], path_to_dir, timeserver)
             stg.block_mesh = data['heads']
-            stg.queue = data['queue']
+            stg.queue = [Block.loads(blocks) for blocks in data['queue']]
             stg.stg_list = stg_list
             stg.user_map = usr_map
             stg.block_count = data['blocks']
@@ -63,7 +74,22 @@ class StgNode:
                 other_stg.stg_list.append(stg)
             return stg
 
-    # todo: посчитать узловые блоки!!!
+    def get_time(self):
+        return self.timeserver.time
+
+    def join_bm(self, other_stg):
+        """
+        Присоединить узел к блокмешу
+        :param other_stg: Узел-хранилище
+        """
+        if not self.available or not other_stg.available:
+            raise RuntimeError("WTF Storage is not available")
+        if self.stg_list:
+            raise RuntimeError(f"Already in blockmesh: {self.stg_list}")
+        self.stg_list.append(other_stg)
+        self.stg_list.extend(other_stg.stg_list)
+        for stg in self.stg_list:
+            stg.stg_list.append(self)
 
     def global_bm_participants(self):
         """
@@ -111,7 +137,7 @@ class StgNode:
                 other_stg = stg
                 break
         if other_stg is None or not other_index:
-            raise RuntimeError(f"Unable to refresh blocks -> no available stg: {self.stg_list}")
+            print(f"Unable to refresh blocks -> no available stg: {self.stg_list}")
         if self_index == other_index:
             return
         check_index = other_index.copy()
@@ -153,7 +179,7 @@ class StgNode:
         else:
             raise RuntimeError("WTF - add new block")
 
-    def connect_user(self, user: UsrNode):
+    def connect_user(self, user):
         """
         Добавить нового пользователя. Подключить к узлу-хранилищу
         :param user: UsrNode
@@ -172,7 +198,7 @@ class StgNode:
             user.head = self.block_mesh[user.addr]
         user.inited = True
 
-    def disconnect_user(self, user: UsrNode):
+    def disconnect_user(self, user):
         """
         Отключить пользователя от узла-хранилища
         :param user: UsrNode
@@ -188,7 +214,7 @@ class StgNode:
         :param block: Block
         :return: Bool
         """
-        return True if block.approved is None else False
+        return True if block.approved is not False else False
 
     def perform_step_1(self):
         """
@@ -236,6 +262,7 @@ class StgNode:
                 self.user_map[block.sender()].receive_from_stg(block)
                 self.queue.pop(0)
                 continue
+            block.approved = True
             self.__block_sending(block)
             return
 
@@ -247,6 +274,7 @@ class StgNode:
                 self.user_map[block.sender()].receive_from_stg(block)
                 self.queue.pop(block)
                 continue
+            block.approved = True
             self.__block_sending(block, count)
             return
 
@@ -254,7 +282,7 @@ class StgNode:
         if self.mod == Mod.Classic:
             self.shared_blocks.append(block)
             for stg in self.stg_list:
-                stg.shared_blocks.append(block)
+                stg.shared_blocks.append(block.copy())
         elif self.mod == Mod.Modified:
             # возможны ошибки
             if block in self.shared_blocks:
@@ -263,9 +291,9 @@ class StgNode:
                 self.shared_blocks[block] = count
             for stg in self.stg_list:
                 if block in stg.shared_blocks:
-                    stg.shared_blocks[block] += count
+                    stg.shared_blocks[block.copy()] += count
                 else:
-                    stg.shared_blocks[block] = count
+                    stg.shared_blocks[block.copy()] = count
         else:
             raise RuntimeError("WTF - send block")
 
@@ -273,7 +301,7 @@ class StgNode:
         if not self.shared_blocks:
             return
         self.shared_blocks.sort(key=lambda b: b.timestamp)
-        participants = {}
+        participants = set()
         while self.shared_blocks:
             block = self.shared_blocks.pop(0)
             if not self.__check_and_insert(block, participants):
@@ -287,17 +315,18 @@ class StgNode:
             return
         blocks = list(self.shared_blocks.keys())
         blocks.sort(key=lambda b: b.timestamp)
-        participants = {}
+        participants = set()
         while blocks:
             block = blocks.pop(0)
             count = self.shared_blocks.pop(block)
             if len(block.participants()) != count:
                 print(f"Got participants: {len(block.participants())}. Expected: {count}")
                 continue
+            shallow_copy = block.copy()
             if not self.__check_and_insert(block, participants):
                 continue
             if self.queue and block == list(self.queue.keys())[0]:
-                self.queue.pop(block)
+                self.queue.pop(shallow_copy)
             self.block_count += 1
 
     def __check_and_insert(self, block, participants):
@@ -329,9 +358,170 @@ class StgNode:
         queue = list(set(self.block_mesh.values()))
         while queue:
             block_id = queue.pop(0)
-            if block_id in index:
+            if block_id is None or block_id in index:
                 continue
             block = self.load_block(block_id)
             queue.extend(list(set(block.parents.values())))
             index.add(block_id)
         return index
+
+
+class User:
+    """
+    Класс реализующий функционал узлов-участников blockmesh сети
+    """
+
+    def __init__(self, mod: Mod, path_to_dir: str, addr: str, sign: str, stg: Storage = None, head: str = None):
+        """
+        :param mod: режим работы
+        :param path_to_dir: путь к дирректории в которой будут храниться блоки этого узла
+        :param addr: идентификатор узла
+        :param sign: подпись узла
+        :param stg: узел-хранилище через который будет обеспечиваться взаимодействие с другими участниками
+        """
+        if mod == Mod.Classic:
+            self.generation_allowed = None
+        elif mod == Mod.Modified:
+            self.generation_allowed = True
+        else:
+            raise RuntimeError(f"Unknown mod: {mod.name}")
+        self.mod = mod
+        self.path_to_dir = mkdir(path_to_dir)
+        self.addr = addr
+        self.sign = sign
+        self.stg = stg
+        self.inited = False
+        self.head = head
+        stg.connect_user(self)
+
+    def save(self):
+        """
+        Сохранить состояние узла в HEAD-файл
+        """
+        if not self.inited or not self.head:
+            raise RuntimeError(f"Unable to save {self.addr} UsrNode: "
+                               f"not inited [{self.inited}] or has no head [{self.head}]")
+        with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as f:
+            json.dump({"head": self.head, "addr": self.addr, "sign": self.sign, "mod": self.mod.name}, f)
+
+    @staticmethod
+    def load(path_to_dir, stg: Storage):
+        """
+        Восстановление состояния узла-участника из файла
+        :param path_to_dir: путь к дирректории
+        :param stg: Узел-хранилище
+        :return: UsrNode
+        """
+        path_to_dir = os.path.abspath(path_to_dir)
+        if path_to_dir is None:
+            raise RuntimeError(f"Could not load UsrNode: {path_to_dir} does not exist")
+        with open(os.path.join(path_to_dir, HEAD_FILE), "r") as f:
+            data = json.load(f)
+            node = User(Mod[data['mod']], path_to_dir, data['addr'], data['sign'], stg, data['head'])
+            return node
+
+    def change_stg(self, new_stg: Storage):
+        """
+        Сменить узе-хранилище
+        :param new_stg: узел-хранилище
+        """
+        if self.stg.available:
+            print(f"Usr {self.addr} was not changed his Stg -> still available")
+            return
+        self.stg.disconnect_user(self)
+        self.stg = new_stg
+        self.stg.connect_user(self)
+
+    def sign_tx(self, tx: Transaction):
+        """
+        Подписание транзакции
+        :param tx: Транзакция
+        :return: хэш родительского блока
+        """
+        if not self.inited:
+            raise RuntimeError("UsrNode not inited in his StgNode")
+        tx.sign(self.addr, self.sign)
+        return self.head
+
+    def receive_from_stg(self, block: Block):
+        """
+        Продолжение второго этапа работы blockmesh - внедрение блока
+        :param block: блок для внедрения в локальную цепочку
+        """
+        if block.approved and self.check_chain(block):
+            self.head = block.save(self.path_to_dir)
+            if self.mod == Mod.Modified and self.addr == block.sender():
+                self.generation_allowed = True
+
+    def check_chain(self, block: Block):
+        """
+        Проверка локальной цепочки блокмеш
+        :param block: блок внедряемый в локальную цепочку
+        :return: Bool
+        """
+        if block.parents[self.addr] != self.head:
+            raise RuntimeError(f"Check chain error:[ Block parent hash: {block.parents[self.addr]} "
+                               f"!= Usr parent hash: {self.head} ]")
+        parent_hash = self.head
+        while parent_hash != GENESIS_BLOCK:
+            try:
+                read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
+            except Exception as e:
+                print(e)
+                return False
+            parent_hash = read_block.parents[self.addr]
+        return True
+
+    def perform(self, recv_addr: list, data: dict = None):
+        """
+        Первый этап работы blockmesh - взаимодействие
+        :param recv_addr: список получателей транзакции
+        :param data: данные
+        """
+        if not self.inited:
+            raise RuntimeError("UsrNode not inited in his StgNode")
+        if self.mod == Mod.Classic:
+            self.__perform(recv_addr, data)
+        elif self.mod == Mod.Modified:
+            self.__perform_mod(recv_addr, data)
+
+    def __perform(self, recv_addr: list, data: dict = None):
+        tx = self.__create_tx(recv_addr, data)
+        for receiver in self.stg.get_users(recv_addr):
+            receiver.sign_tx(tx)
+        block = self.__create_block(tx)
+        self.stg.add_new_block(block)
+
+    def __perform_mod(self, recv_addr: list, data: dict = None):
+        if not self.generation_allowed:
+            print(f"Not allowed yet to gen new transaction: {self.addr}")
+            return
+        tx = self.__create_tx(recv_addr, data)
+        receivers = self.stg.get_users(recv_addr)
+        for receiver in receivers:
+            receiver.sign_tx(tx)
+        block = self.__create_block(tx)
+        self.stg.add_new_block(block)
+        for receiver in receivers:
+            receiver.stg.add_new_block(block)
+        self.generation_allowed = False
+
+    def __create_tx(self, receivers: list, data: dict = None):
+        """
+        Создание транзакции
+        :param receivers: список получателей транзакции
+        :param data: данные
+        :return: Транзакция - Transaction
+        """
+        return Transaction(sender_addr=self.addr, sender_sign=self.sign,
+                           receivers=receivers, data=data if data else {})
+
+    def __create_block(self, tx: Transaction):
+        """
+        Создание блока транзакции
+        :param tx: транзакция
+        :return: Блок транзакции - Block
+        """
+        if tx.sender != self.addr:
+            raise RuntimeError(f"TxSenderAddr {tx.sender} != UsrAddr {self.addr}")
+        return Block(tx, self.stg.get_time())

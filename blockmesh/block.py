@@ -47,13 +47,13 @@ class Transaction:
         return f"[TX: {self.dumps()}]"
 
     @staticmethod
-    def load(sdata):
+    def loads(data):
         """
         Чтение транзакции из JSON в формате строки и создание объекта
-        :param sdata: JSON в формате строки
+        :param data: JSON в формате строки
         :return: Transaction
         """
-        js = json.loads(sdata)
+        js = json.loads(data)
         send = js['send']
         participants = js['participants']
         data = js['data']
@@ -114,23 +114,26 @@ class Block:
                                f"parents: {parents}, time: {timestamp}")
         self.tx = transaction
         self.parents = parents if parents else {}
-        self.timestamp = timestamp if timestamp else time.time_ns()
+        self.timestamp = timestamp
         self.approved = None
 
     def __hash__(self):
-        # возможны ошибки int(..., 16)
+        return int(self.shash(), 16)
+
+    def shash(self):
         return sha256(bytes(json.dumps({'header': {'version': self.version,
                                                    'timestamp': self.timestamp,
                                                    'parents': self.parents}}), 'utf-8')).hexdigest()
 
     def __eq__(self, other):
-        return self.version == other.verson and \
+        return self.version == other.version and \
                self.timestamp == other.timestamp and \
-               tuple(self.parents) == tuple(other.parents) and \
                self.tx == other.tx
 
-    def __str__(self):
-        return f"[Block: {self.dumps()}]"
+    def copy(self):
+        b = Block(self.tx, self.timestamp, self.parents.copy())
+        b.approved = self.approved
+        return b
 
     def set_parents(self, parents: dict):
         """
@@ -138,7 +141,7 @@ class Block:
         :return:
         """
         participants = self.participants()
-        for parent, hsh in parents:
+        for parent, hsh in parents.items():
             if parent not in participants:
                 raise RuntimeError(f"Parent {parent} not in {participants}")
             self.parents[parent] = hsh
@@ -158,6 +161,14 @@ class Block:
                                       'parents': self.parents},
                            'transaction': self.tx.dumps()})
 
+    @staticmethod
+    def loads(data):
+        data = json.loads(data)
+        block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
+        block.version = data['header']['version']
+        block.approved = True
+        return block
+
     def save(self, path_to_dir):
         """
         Запись блока транзакции в файл
@@ -169,7 +180,7 @@ class Block:
             raise RuntimeError(f"Block {self} is not approved and can't be saved")
         if not os.path.abspath(path_to_dir):
             os.makedirs(path_to_dir)
-        fname = str(self.__hash__())
+        fname = self.shash()
         with open(os.path.join(path_to_dir, fname), "w") as out:
             out.write(self.dumps())
         return fname
@@ -188,7 +199,7 @@ class Block:
             raise RuntimeError(f"Could not load Block: {path_to_file} not file")
         with open(path_to_file, "r") as json_file:
             data = json.load(json_file)
-            block = Block(Transaction.load(data['transaction']), data['header']['timestamp'], data['header']['parents'])
+            block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
             block.version = data['header']['version']
             block.approved = True
             return block
