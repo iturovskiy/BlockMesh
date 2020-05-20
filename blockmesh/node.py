@@ -55,7 +55,7 @@ class Storage:
         """
         with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as file:
             json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': [b.dumps() for b in self.queue],
-                       "blocks": self.block_count}, file)
+                       'blocks': self.block_count}, file)
 
     @staticmethod
     def load(path_to_dir, timeserver, stg_list, usr_map=None):
