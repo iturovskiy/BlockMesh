@@ -5,6 +5,8 @@ import os
 STG_DIR = r'Storages'
 USR_DIR = r'Users'
 MODEL_F = r'MODEL'
+USR_NODE = r'usr_'
+STG_NODE = r'stg_'
 
 
 class ModelTime:
@@ -68,18 +70,18 @@ class Model:
         self.duration = [duration_1, duration_2]
         self.stg_num = stg_num
         self.usr_num = usr_num
-        self.stgs = None
-        self.usrs = None
+        self.stgs = []
+        self.usrs = []
         self.model_time = None
         self.usr_activity = activity
 
     def init(self, ts=None):
         self.model_time = ts if ts else ModelTime()
-        self.stgs = [node.Storage(self.mod, os.path.join(self.path, STG_DIR, f"stg_{i}"),
+        self.stgs = [node.Storage(self.mod, os.path.join(self.path, STG_DIR, f"{STG_NODE}{i}"),
                                   self.model_time) for i in range(self.stg_num)]
         for i in range(len(self.stgs) - 1):
             self.stgs[i + 1].join_bm(self.stgs[i])
-        self.usrs = [node.User(self.mod, os.path.join(self.path, USR_DIR, f"usr_{i}"),
+        self.usrs = [node.User(self.mod, os.path.join(self.path, USR_DIR, f"{USR_NODE}{i}"),
                                f"user{i}", f"sign{i}", self.stgs[i % self.stg_num]) for i in range(self.usr_num)]
 
     def save(self):
@@ -103,8 +105,21 @@ class Model:
             data = json.load(file)
             model = Model(node.Mod[data["mod"]], path_to_dir, data['num'][0], data['num'][1],
                           data['dur'][0], data['dur'][1], data['activity'])
-            ts = ModelTime.loads(data['time_s'])
-            # todo: continue
+            model.model_time = ModelTime.loads(data['time_s'])
+            if model.stg_num < 1:
+                if model.usr_num > 0:
+                    raise RuntimeError(f"Model is broken")
+                model.init()
+            else:
+                stg = node.Storage.load(os.path.join(path_to_dir, STG_DIR, f"{STG_NODE}0"), model.model_time)
+                model.stgs.append(stg)
+                for i in range(1, model.stg_num):
+                    stg = node.Storage.load(os.path.join(path_to_dir, STG_DIR, f"{STG_NODE}{i}"), model.model_time)
+                    model.stgs.append(stg)
+                    model.stgs[i].join_bm(model.stgs[i - 1])
+                model.usrs = [node.User.load(os.path.join(path_to_dir, USR_DIR, f"{USR_NODE}{i}"),
+                                             model.stgs[i % model.stg_num]) for i in range(model.usr_num)]
+            return model
 
     def perform(self, rounds: int, failures: dict = None):
         for round in range(rounds):

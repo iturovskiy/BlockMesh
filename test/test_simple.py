@@ -68,6 +68,14 @@ def test_unavail(mod):
     usr_step(usr, 8, [6])
     time.tick()
     stg_step(stg, time, 3)
+    time.tick()
+    stg[1].disable()
+    usr_step(usr, 1, [0])
+    usr_step(usr, 1, [2])
+    usr_step(usr, 3, [4, 5])
+    usr_step(usr, 5, [6, 7])
+    usr_step(usr, 8, [3, 4])
+    stg_step(stg, time, 5)
 
 
 if __name__ == '__main__':
