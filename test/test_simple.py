@@ -79,7 +79,7 @@ def test_unavail(mod):
 
 
 if __name__ == '__main__':
-    # test_simple(Mod.Classic)
-    # test_simple(Mod.Modified)
+    test_simple(Mod.Classic)
+    test_simple(Mod.Modified)
     test_unavail(Mod.Classic)
     test_unavail(Mod.Modified)

@@ -33,7 +33,7 @@ class Storage:
         :type timeserver:
         """
         if mod == Mod.Classic:
-            self.queue = []
+            self.queue = set()  # []
             self.shared_blocks = []
         elif mod == Mod.Modified:
             self.queue = {}
@@ -74,10 +74,10 @@ class Storage:
             data = json.load(file)
             stg = Storage(Mod[data['mod']], path_to_dir, timeserver)
             stg.block_mesh = data['heads']
-            stg.queue = [Block.loads(blocks) for blocks in data['queue']]
+            stg.queue = set([Block.loads(blocks) for blocks in data['queue']])
             stg.block_count = data['blocks']
-            stg.user_map = usr_map
-            stg.stg_list = stg_list
+            stg.user_map = usr_map if usr_map else {}
+            stg.stg_list = stg_list if stg_list else []
             if stg_list:
                 for other_stg in stg_list:
                     other_stg.stg_list.append(stg)
@@ -150,7 +150,8 @@ class Storage:
                 other_stg = stg
                 break
         if other_stg is None or not other_index:
-            print(f"INFO: Unable to refresh blocks -> no available stg: {self.stg_list}")
+            # print(f"INFO: Unable to refresh blocks -> no available stg: {self.stg_list}")
+            return
         if self_index == other_index:
             return
         check_index = other_index.copy()
@@ -175,7 +176,7 @@ class Storage:
             # Ошибка? или просто не принимать участие?!
             raise RuntimeError(f"Stg is disabled: {self}")
         if self.mod == Mod.Classic:
-            self.queue.append(block)
+            self.queue.add(block)
         elif self.mod == Mod.Modified:
             if block in self.queue:
                 self.queue[block] += 1
@@ -226,7 +227,7 @@ class Storage:
         Шаг 1 - "рассылка" блока для консенсуса
         """
         if not self.available:
-            print(f"Stg is disabled: {self.path_to_dir}. Unable to perform step 1.")
+            # print(f"Stg is disabled: {self.path_to_dir}. Unable to perform step 1.")
             return
         if self.mod == Mod.Classic:
             self.__perform_step_1()
@@ -240,7 +241,7 @@ class Storage:
         Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
         """
         if not self.available:
-            print(f"Stg is disabled: {self.path_to_dir}. Unable to perform step 2.")
+            # print(f"Stg is disabled: {self.path_to_dir}. Unable to perform step 2.")
             return
         if self.mod == Mod.Classic:
             self.__perform_step_2()
@@ -262,20 +263,17 @@ class Storage:
         return [self.__request_user(user) for user in users]
 
     def __perform_step_1(self):
-        while self.queue:
-            block = self.queue[0]
+        for block in self.queue.copy():
             if self.check_block(block) is False:
                 block.approved = False
                 self.user_map[block.sender()].receive_from_stg(block)
-                self.queue.pop(0)
+                self.queue.pop(block)
                 continue
             block.approved = True
             self.__block_sending(block)
-            return
 
     def __perform_step_1_mod(self):
-        while self.queue:
-            block, count = list(self.queue.items())[0]
+        for block, count in self.queue.items():
             if self.check_block(block) is False:
                 block.approved = False
                 self.user_map[block.sender()].receive_from_stg(block)
@@ -283,7 +281,6 @@ class Storage:
                 continue
             block.approved = True
             self.__block_sending(block, count)
-            return
 
     def __block_sending(self, block, count=None):
         if self.mod == Mod.Classic:
@@ -311,10 +308,11 @@ class Storage:
         participants = set()
         while self.shared_blocks:
             block = self.shared_blocks.pop(0)
+            cblock = block.copy()
             if not self.__check_and_insert(block, participants):
                 continue
-            if self.queue and block == self.queue[0]:
-                self.queue.pop(0)
+            if self.queue and cblock in self.queue:
+                self.queue.remove(cblock)
             self.block_count += 1
 
     def __perform_step_2_mod(self):
@@ -327,13 +325,13 @@ class Storage:
             block = blocks.pop(0)
             count = self.shared_blocks.pop(block)
             if len(block.participants()) != count:
-                print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
+                # print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
                 continue
-            shallow_copy = block.copy()
+            cblock = block.copy()
             if not self.__check_and_insert(block, participants):
                 continue
-            if self.queue and block == list(self.queue.keys())[0]:
-                self.queue.pop(shallow_copy)
+            if self.queue and cblock in self.queue:
+                self.queue.pop(cblock)
             self.block_count += 1
 
     def __check_and_insert(self, block, participants):
@@ -358,7 +356,7 @@ class Storage:
         flag = False
         for stg in self.stg_list:
             if not stg.available:
-                print(f"INFO: {stg.path_to_dir} is unavailable cant request user")
+                # print(f"INFO: {stg.path_to_dir} is unavailable cant request user")
                 flag = True
                 continue
             if user in stg.user_map:
@@ -378,6 +376,62 @@ class Storage:
             queue.extend(list(set(block.parents.values())))
             index.add(block_id)
         return index
+
+    # def __perform_step_1(self):
+    #     while self.queue:
+    #         block = self.queue[0]
+    #         if self.check_block(block) is False:
+    #             block.approved = False
+    #             self.user_map[block.sender()].receive_from_stg(block)
+    #             self.queue.pop(0)
+    #             continue
+    #         block.approved = True
+    #         self.__block_sending(block)
+    #         return
+    #
+    # def __perform_step_1_mod(self):
+    #     while self.queue:
+    #         block, count = list(self.queue.items())[0]
+    #         if self.check_block(block) is False:
+    #             block.approved = False
+    #             self.user_map[block.sender()].receive_from_stg(block)
+    #             self.queue.pop(block)
+    #             continue
+    #         block.approved = True
+    #         self.__block_sending(block, count)
+    #         return
+    #
+    # def __perform_step_2(self):
+    #     if not self.shared_blocks:
+    #         return
+    #     self.shared_blocks.sort(key=lambda b: b.timestamp)
+    #     participants = set()
+    #     while self.shared_blocks:
+    #         block = self.shared_blocks.pop(0)
+    #         if not self.__check_and_insert(block, participants):
+    #             continue
+    #         if self.queue and block == self.queue[0]:
+    #             self.queue.pop(0)
+    #         self.block_count += 1
+    #
+    # def __perform_step_2_mod(self):
+    #     if not self.shared_blocks:
+    #         return
+    #     blocks = list(self.shared_blocks.keys())
+    #     blocks.sort(key=lambda b: b.timestamp)
+    #     participants = set()
+    #     while blocks:
+    #         block = blocks.pop(0)
+    #         count = self.shared_blocks.pop(block)
+    #         if len(block.participants()) != count:
+    #             print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
+    #             continue
+    #         cblock = block.copy()
+    #         if not self.__check_and_insert(block, participants):
+    #             continue
+    #         if self.queue and block == list(self.queue.keys())[0]:
+    #             self.queue.pop(cblock)
+    #         self.block_count += 1
 
 
 class User:
@@ -463,8 +517,18 @@ class User:
         """
         if block.approved and self.check_chain(block):
             self.head = block.save(self.path_to_dir)
+            self.blocks += 1
             if self.mod == Mod.Modified and self.addr == block.sender():
                 self.generation_allowed = True
+
+    def index_blocks(self):
+        blocks = {GENESIS_BLOCK}
+        parent_hash = self.head
+        while parent_hash != GENESIS_BLOCK:
+            read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
+            parent_hash = read_block.parents[self.addr]
+            blocks.add(read_block)
+        return blocks
 
     def check_chain(self, block: Block):
         """
@@ -480,7 +544,7 @@ class User:
             try:
                 read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
             except Exception as e:
-                print("INFO:", e)
+                # print("INFO:", e)
                 return False
             parent_hash = read_block.parents[self.addr]
         return True
@@ -494,7 +558,7 @@ class User:
         if not self.inited:
             raise RuntimeError("UsrNode not inited in his StgNode")
         if not self.stg.available:
-            print(f"INFO: {self.stg.path_to_dir} is not available! Change stg!")
+            # print(f"INFO: {self.stg.path_to_dir} is not available! Change stg!")
             return
         if self.mod == Mod.Classic:
             self.__perform(recv_addr, data)
@@ -506,7 +570,7 @@ class User:
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:
             if not receiver:
-                print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
+                # print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
                 return
             receiver.sign_tx(tx)
         block = self.__create_block(tx)
@@ -514,13 +578,13 @@ class User:
 
     def __perform_mod(self, recv_addr: list, data: dict = None):
         if not self.generation_allowed:
-            print(f"INFO: Not allowed yet to gen new transaction: {self.addr}")
+            # print(f"INFO: Not allowed yet to gen new transaction: {self.addr}")
             return
         tx = self.__create_tx(recv_addr, data)
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:
             if not receiver:
-                print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
+                # print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
                 return
             receiver.sign_tx(tx)
         block = self.__create_block(tx)
