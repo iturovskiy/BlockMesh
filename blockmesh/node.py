@@ -54,7 +54,11 @@ class Storage:
         Запись состояния узла-хранилища в HEAD-файл
         """
         with open(os.path.join(self.path_to_dir, HEAD_FILE), "w") as file:
-            json.dump({'mod': self.mod.name, 'heads': self.block_mesh, 'queue': [b.dumps() for b in self.queue],
+            json.dump({'mod': self.mod.name,
+                       'heads': self.block_mesh,
+                       'available': self.available,
+                       'queue': [b.dumps() for b in self.queue] if self.mod == Mod.Classic else
+                       {b.dumps(): c for b, c in self.queue.items()},
                        'blocks': self.block_count}, file)
 
     @staticmethod
@@ -72,13 +76,22 @@ class Storage:
             raise RuntimeError(f"Could not load StgNode: {path_to_dir} does not exist")
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as file:
             data = json.load(file)
-            stg = Storage(Mod[data['mod']], path_to_dir, timeserver)
+            mod = Mod[data['mod']]
+            stg = Storage(mod, path_to_dir, timeserver)
             stg.block_mesh = data['heads']
-            stg.queue = set([Block.loads(blocks) for blocks in data['queue']])
+            if mod == Mod.Classic:
+                stg.queue = set([Block.loads(blocks) for blocks in data['queue']])
+            else:
+                stg.queue = {Block.loads(blocks): data['queue'][blocks] for blocks in data['queue']}
             stg.block_count = data['blocks']
+            bc = stg.index_blocks()
+            if len(bc) != stg.block_count:
+                print(f"Storage broken! IndexBC: {len(bc)} != SelfBC :{stg.block_count}")
+            stg.available = data['available']
             stg.user_map = usr_map if usr_map else {}
-            stg.stg_list = stg_list if stg_list else []
+            stg.stg_list = []
             if stg_list:
+                stg.stg_list = stg_list
                 for other_stg in stg_list:
                     other_stg.stg_list.append(stg)
             return stg
@@ -94,8 +107,6 @@ class Storage:
         Присоединить узел к блокмешу
         :param other_stg: Узел-хранилище
         """
-        if not self.available or not other_stg.available:
-            raise RuntimeError("WTF Storage is not available")
         if self.stg_list:
             raise RuntimeError(f"Already in blockmesh: {self.stg_list}")
         self.stg_list.append(other_stg)
@@ -134,24 +145,23 @@ class Storage:
         Активировать работу узла
         """
         if not self.available:
-            self.available = True
             self.refresh_blocks()
+            self.available = True
 
     def refresh_blocks(self):
         """
         Проверка и обновление блоков блокмеш
         """
-        self_index = self.__index_blocks()
+        self_index = self.index_blocks()
         other_index = {}
         other_stg = None
         for stg in self.stg_list:
             if stg.available:
-                other_index = stg.__index_blocks()
+                other_index = stg.index_blocks()
                 other_stg = stg
                 break
         if other_stg is None or not other_index:
-            # print(f"INFO: Unable to refresh blocks -> no available stg: {self.stg_list}")
-            return
+            raise Warning(f"INFO: Unable to refresh blocks -> no available stg: {self.stg_list}")
         if self_index == other_index:
             return
         check_index = other_index.copy()
@@ -159,13 +169,32 @@ class Storage:
         for index in other_index:
             b = other_stg.load_block(index)
             b.save(self.path_to_dir)
-        self.block_mesh = other_stg.copy()
-        self_index = self.__index_blocks()
+        self.block_mesh = other_stg.block_mesh.copy()
+        self_index = self.index_blocks()
         if check_index != self_index:
             self.available = False
             raise RuntimeError(f"Local blockmesh totally broken:\n"
                                f"Self  index: {self_index}\n"
                                f"Check index: {check_index}")
+        self.block_count = len(self_index)
+
+    def load_block(self, block_id):
+        return Block.load(os.path.join(self.path_to_dir, block_id))
+
+    def index_blocks(self):
+        """
+        :return: set из хэшей всех блоков в блокмеше
+        """
+        index = {GENESIS_BLOCK}
+        queue = list(set(self.block_mesh.values()))
+        while queue:
+            block_id = queue.pop(0)
+            if block_id is None or block_id in index:
+                continue
+            block = self.load_block(block_id)
+            queue.extend(list(set(block.parents.values())))
+            index.add(block_id)
+        return index
 
     def add_new_block(self, block: Block):
         """
@@ -178,10 +207,8 @@ class Storage:
         if self.mod == Mod.Classic:
             self.queue.add(block)
         elif self.mod == Mod.Modified:
-            if block in self.queue:
-                self.queue[block] += 1
-            else:
-                self.queue[block] = 1
+            self.queue[block] = 1 if block not in self.queue else \
+                                self.queue[block] + 1
         else:
             raise RuntimeError("WTF - add new block")
 
@@ -190,8 +217,6 @@ class Storage:
         Добавить нового пользователя. Подключить к узлу-хранилищу
         :param user: UsrNode
         """
-        if not self.available:
-            raise RuntimeError(f"Stg is disabled: {self}")
         if user.addr not in self.user_map:
             self.user_map[user.addr] = user
         if self.user_map[user.addr].head != user.head:
@@ -286,7 +311,8 @@ class Storage:
         if self.mod == Mod.Classic:
             self.shared_blocks.append(block)
             for stg in self.stg_list:
-                stg.shared_blocks.append(block.copy())
+                if stg.available:
+                    stg.shared_blocks.append(block.copy())
         elif self.mod == Mod.Modified:
             # возможны ошибки
             if block in self.shared_blocks:
@@ -294,10 +320,11 @@ class Storage:
             else:
                 self.shared_blocks[block] = count
             for stg in self.stg_list:
-                if block in stg.shared_blocks:
-                    stg.shared_blocks[block.copy()] += count
-                else:
-                    stg.shared_blocks[block.copy()] = count
+                if stg.available:
+                    if block in stg.shared_blocks:
+                        stg.shared_blocks[block.copy()] += count
+                    else:
+                        stg.shared_blocks[block.copy()] = count
         else:
             raise RuntimeError("WTF - send block")
 
@@ -313,7 +340,6 @@ class Storage:
                 continue
             if self.queue and cblock in self.queue:
                 self.queue.remove(cblock)
-            self.block_count += 1
 
     def __perform_step_2_mod(self):
         if not self.shared_blocks:
@@ -332,7 +358,6 @@ class Storage:
                 continue
             if self.queue and cblock in self.queue:
                 self.queue.pop(cblock)
-            self.block_count += 1
 
     def __check_and_insert(self, block, participants):
         # проверка
@@ -348,6 +373,7 @@ class Storage:
             self.block_mesh[user] = fname
             if user in self.user_map:
                 self.user_map[user].receive_from_stg(block)
+        self.block_count += 1
         return True
 
     def __request_user(self, user):
@@ -364,74 +390,6 @@ class Storage:
         if flag:
             return None
         raise RuntimeError(f"There is no such user: {user}")
-
-    def __index_blocks(self):
-        index = {GENESIS_BLOCK}
-        queue = list(set(self.block_mesh.values()))
-        while queue:
-            block_id = queue.pop(0)
-            if block_id is None or block_id in index:
-                continue
-            block = Block.load(os.path.join(self.path_to_dir, block_id))
-            queue.extend(list(set(block.parents.values())))
-            index.add(block_id)
-        return index
-
-    # def __perform_step_1(self):
-    #     while self.queue:
-    #         block = self.queue[0]
-    #         if self.check_block(block) is False:
-    #             block.approved = False
-    #             self.user_map[block.sender()].receive_from_stg(block)
-    #             self.queue.pop(0)
-    #             continue
-    #         block.approved = True
-    #         self.__block_sending(block)
-    #         return
-    #
-    # def __perform_step_1_mod(self):
-    #     while self.queue:
-    #         block, count = list(self.queue.items())[0]
-    #         if self.check_block(block) is False:
-    #             block.approved = False
-    #             self.user_map[block.sender()].receive_from_stg(block)
-    #             self.queue.pop(block)
-    #             continue
-    #         block.approved = True
-    #         self.__block_sending(block, count)
-    #         return
-    #
-    # def __perform_step_2(self):
-    #     if not self.shared_blocks:
-    #         return
-    #     self.shared_blocks.sort(key=lambda b: b.timestamp)
-    #     participants = set()
-    #     while self.shared_blocks:
-    #         block = self.shared_blocks.pop(0)
-    #         if not self.__check_and_insert(block, participants):
-    #             continue
-    #         if self.queue and block == self.queue[0]:
-    #             self.queue.pop(0)
-    #         self.block_count += 1
-    #
-    # def __perform_step_2_mod(self):
-    #     if not self.shared_blocks:
-    #         return
-    #     blocks = list(self.shared_blocks.keys())
-    #     blocks.sort(key=lambda b: b.timestamp)
-    #     participants = set()
-    #     while blocks:
-    #         block = blocks.pop(0)
-    #         count = self.shared_blocks.pop(block)
-    #         if len(block.participants()) != count:
-    #             print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
-    #             continue
-    #         cblock = block.copy()
-    #         if not self.__check_and_insert(block, participants):
-    #             continue
-    #         if self.queue and block == list(self.queue.keys())[0]:
-    #             self.queue.pop(cblock)
-    #         self.block_count += 1
 
 
 class User:
@@ -460,6 +418,7 @@ class User:
         self.stg = stg
         self.inited = False
         self.head = head
+        self.block_count = 0
         stg.connect_user(self)
 
     def save(self):
@@ -486,6 +445,7 @@ class User:
         with open(os.path.join(path_to_dir, HEAD_FILE), "r") as f:
             data = json.load(f)
             node = User(Mod[data['mod']], path_to_dir, data['addr'], data['sign'], stg, data['head'])
+            node.block_count = len(node.index_blocks())
             return node
 
     def change_stg(self, new_stg: Storage):
@@ -515,20 +475,20 @@ class User:
         Продолжение второго этапа работы blockmesh - внедрение блока
         :param block: блок для внедрения в локальную цепочку
         """
-        if block.approved and self.check_chain(block):
+        if block.approved is True and self.check_chain(block):
             self.head = block.save(self.path_to_dir)
-            self.blocks += 1
             if self.mod == Mod.Modified and self.addr == block.sender():
                 self.generation_allowed = True
+            self.block_count += 1
 
     def index_blocks(self):
-        blocks = {GENESIS_BLOCK}
+        index = {GENESIS_BLOCK}
         parent_hash = self.head
         while parent_hash != GENESIS_BLOCK:
-            read_block = Block.load(os.path.join(self.path_to_dir, parent_hash))
-            parent_hash = read_block.parents[self.addr]
-            blocks.add(read_block)
-        return blocks
+            index.add(parent_hash)
+            block = Block.load(os.path.join(self.path_to_dir, parent_hash))
+            parent_hash = block.parents[self.addr]
+        return index
 
     def check_chain(self, block: Block):
         """
@@ -563,52 +523,34 @@ class User:
         if self.mod == Mod.Classic:
             self.__perform(recv_addr, data)
         elif self.mod == Mod.Modified:
-            self.__perform_mod(recv_addr, data)
+            if not self.generation_allowed:
+                return
+            res = self.__perform(recv_addr, data)
+            if res:
+                block, receivers = res
+                for receiver in receivers:
+                    receiver.stg.add_new_block(block)
+                self.generation_allowed = False
 
     def __perform(self, recv_addr: list, data: dict = None):
         tx = self.__create_tx(recv_addr, data)
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:
-            if not receiver:
+            if receiver is None:
                 # print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
-                return
+                return None
             receiver.sign_tx(tx)
+            if receiver.stg.available is False:
+                raise RuntimeError()
         block = self.__create_block(tx)
         self.stg.add_new_block(block)
-
-    def __perform_mod(self, recv_addr: list, data: dict = None):
-        if not self.generation_allowed:
-            # print(f"INFO: Not allowed yet to gen new transaction: {self.addr}")
-            return
-        tx = self.__create_tx(recv_addr, data)
-        receivers = self.stg.get_users(recv_addr)
-        for receiver in receivers:
-            if not receiver:
-                # print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
-                return
-            receiver.sign_tx(tx)
-        block = self.__create_block(tx)
-        self.stg.add_new_block(block)
-        for receiver in receivers:
-            receiver.stg.add_new_block(block)
-        self.generation_allowed = False
+        return block, receivers
 
     def __create_tx(self, receivers: list, data: dict = None):
-        """
-        Создание транзакции
-        :param receivers: список получателей транзакции
-        :param data: данные
-        :return: Транзакция - Transaction
-        """
         return Transaction(sender_addr=self.addr, sender_sign=self.sign,
                            receivers=receivers, data=data if data else {})
 
     def __create_block(self, tx: Transaction):
-        """
-        Создание блока транзакции
-        :param tx: транзакция
-        :return: Блок транзакции - Block
-        """
         if tx.sender != self.addr:
             raise RuntimeError(f"TxSenderAddr {tx.sender} != UsrAddr {self.addr}")
         return Block(tx, self.stg.get_time())

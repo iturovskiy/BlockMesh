@@ -1,10 +1,13 @@
 import blockmesh.node as node
+from progress.bar import IncrementalBar
 import json
+import csv
 import os
 
 STG_DIR = r'Storages'
 USR_DIR = r'Users'
 MODEL_F = r'MODEL'
+RESULT_F = r'RESULT.csv'
 USR_NODE = r'usr_'
 STG_NODE = r'stg_'
 
@@ -113,14 +116,22 @@ class Model:
     @staticmethod
     def load(path_to_dir):
         model = Model.load_simple(path_to_dir)
+        bar_s = IncrementalBar('Load storages', max=model.stg_num)
         stg = node.Storage.load(os.path.join(path_to_dir, STG_DIR, f"{STG_NODE}0"), model.model_time)
         model.stgs.append(stg)
+        bar_s.next()
         for i in range(1, model.stg_num):
             stg = node.Storage.load(os.path.join(path_to_dir, STG_DIR, f"{STG_NODE}{i}"), model.model_time)
             model.stgs.append(stg)
             model.stgs[i].join_bm(model.stgs[i - 1])
-        model.usrs = [node.User.load(os.path.join(path_to_dir, USR_DIR, f"{USR_NODE}{i}"),
-                                     model.stgs[i % model.stg_num]) for i in range(model.usr_num)]
+            bar_s.next()
+        bar_s.finish()
+        bar_u = IncrementalBar('Load users', max=model.usr_num)
+        for i in range(model.usr_num):
+            model.usrs.append(node.User.load(os.path.join(path_to_dir, USR_DIR, f"{USR_NODE}{i}"),
+                                             model.stgs[i % model.stg_num]))
+            bar_u.next()
+        bar_u.finish()
         return model
 
     def perform(self, rounds: int, failures: dict = None):
@@ -132,16 +143,21 @@ class Model:
                 if v >= self.usr_num or v < 0:
                     raise ValueError(f"Bad failures: {failures}. Stgs: {self.stg_num}. Usrs: {self.usr_num}")
         disabled = {}
-        percent_10 = (rounds + 1) // 10
-        mul = 1
-        for i in range(rounds):
-            self.disable(disabled, failures, i)
-            self.usr_step(i)
-            self.stg_step()
-            self.performed += 1
-            if (i + 1) % percent_10 == 0:
-                print(f"Status: {mul * 10}% : {mul * percent_10} rounds.\n{self.get_stat()}\n")
-                mul += 1
+        header = list(self.get_stat().keys())
+        bar = IncrementalBar('Rounds', max=rounds)
+        with open(os.path.join(self.path, RESULT_F), 'a', newline='') as csv_file:
+            writer = csv.DictWriter(csv_file, header)
+            if self.performed == 0:
+                writer.writeheader()
+            for i in range(rounds):
+                self.disable(disabled, failures, i + 1)
+                self.usr_step(i)
+                self.stg_step()
+                self.performed += 1
+                stat = self.get_stat()
+                writer.writerow(stat)
+                bar.next()
+        bar.finish()
 
     def get_stat(self):
         queues = []
@@ -149,26 +165,30 @@ class Model:
         stg_usrs = []
         stg_usrs_count = 0
         stg_active = 0
-        bc = set()
-        for stg in self.stgs:
+        bc = {}
+        for i, stg in enumerate(self.stgs):
             queues.append(stg.queue_len())
             queue_len += stg.queue_len()
             stg_usrs.append(stg.local_bm_participants())
             stg_usrs_count += stg.local_bm_participants()
-            bc.add(stg.block_count)
+            lbc = stg.block_count
+            if lbc in bc:
+                bc[lbc].append(i)
+            else:
+                bc[lbc] = [i]
             if stg.available:
                 stg_active += 1
-        return {"Timestamp": self.model_time.time,
-                "Performed": self.performed,
+        return {"Performed": self.performed,
+                "Timestamp": self.model_time.time,
                 "StgTotal": self.stg_num,
                 "UsrTotal": self.usr_num,
                 "GlobalBM": bc,
-                "LocalBM" : [len(u.index_blocks()) for u in self.usrs],
+                "LocalBM": [u.block_count for u in self.usrs],
                 "StgActive": stg_active,
                 "QueueLen": queues,
                 "AvgQueue": queue_len / self.stg_num,
                 "StgUsrs": stg_usrs,
-                "AvgStgUsrs": sum(stg_usrs) / self.stg_num}
+                "AvgStgUsrs": stg_usrs_count / self.stg_num}
 
     def disable(self, disabled, failures, i):
         if i in failures:
@@ -178,7 +198,7 @@ class Model:
                 else:
                     self.stgs[k].disable()
                     disabled[k] = 1
-        for k in disabled:
+        for k in disabled.copy():
             disabled[k] -= 1
             if disabled[k] < 0:
                 self.stgs[k].enable()
