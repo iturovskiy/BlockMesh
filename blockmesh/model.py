@@ -1,5 +1,10 @@
-import blockmesh.node as node
 from progress.bar import IncrementalBar
+import blockmesh.node as node
+import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
+import networkx as nx
+import numpy as np
+import ast
 import json
 import csv
 import os
@@ -10,6 +15,14 @@ MODEL_F = r'MODEL'
 RESULT_F = r'RESULT.csv'
 USR_NODE = r'usr_'
 STG_NODE = r'stg_'
+
+
+def div_up(a: int, b: int) -> int:
+    return 1 + ((a - 1) // b)
+
+
+def mod_up(a: int, b: int) -> int:
+    return 1 + ((a - 1) % b)
 
 
 class ModelTime:
@@ -149,15 +162,58 @@ class Model:
             writer = csv.DictWriter(csv_file, header)
             if self.performed == 0:
                 writer.writeheader()
+                writer.writerow(self.get_stat())
             for i in range(rounds):
-                self.disable(disabled, failures, i + 1)
-                self.usr_step(i)
-                self.stg_step()
+                self.__disable(disabled, failures, i + 1)
+                self.__usr_step()
+                self.__stg_step()
                 self.performed += 1
                 stat = self.get_stat()
                 writer.writerow(stat)
                 bar.next()
         bar.finish()
+        self.draw_plot()
+
+    def draw_graph(self):
+        scale = 10
+        edges, pos, q = self.__graph(scale)
+        fig, ax = plt.subplots(figsize=(16, 9))
+        g = nx.DiGraph()
+        g.add_edges_from(edges)
+        node_list = list(pos.keys())
+        pos.update({i: (scale * (i + 1), 0) for i in range(self.performed)})
+        nx.draw_networkx_edges(g, ax=ax, pos=pos, edgelist=edges,
+                               width=1, alpha=0.7)
+        nx.draw_networkx_edges(g, ax=ax, pos=pos, edgelist=q,
+                               width=1.2, edge_color='r')
+        nx.draw_networkx_nodes(g, ax=ax, pos=pos, nodelist=node_list, node_size=400, alpha=0.9)
+        nx.draw_networkx_labels(g, pos, labels={k: k for k in node_list}, font_size=7)
+        fig.savefig(os.path.join(self.path, f"graph_{self.performed}.png"), dpi=300)
+
+    def draw_plot(self):
+        x_data = []
+        y_data_total_bm = []
+        y_data_queue = []
+        with open(os.path.join(self.path, RESULT_F), 'r', newline='') as csv_file:
+            reader = csv.DictReader(csv_file)
+            for row in reader:
+                x_data.append(int(row["Performed"]))
+                y_data_total_bm.append(max(ast.literal_eval(row["GlobalBM"]), key=int))
+                y_data_queue.append(sum(ast.literal_eval(row["QueueLen"])))
+        if len(x_data) != self.performed:
+            raise RuntimeError("WTF")
+        fig, ax = plt.subplots(figsize=(8, 6))
+        ax.plot(x_data, y_data_total_bm, '-', label="Блоков в блокмеше")
+        ax.plot(x_data, y_data_queue, '-', label="Отложенные блоки")
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(div_up(self.performed, 10)))
+        ax.xaxis.set_minor_locator(ticker.MultipleLocator(div_up(self.performed, 50)))
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(div_up(y_data_total_bm[-1] if y_data_total_bm else 0, 10)))
+        ax.yaxis.set_minor_locator(ticker.MultipleLocator(div_up(y_data_total_bm[-1] if y_data_total_bm else 0, 50)))
+        ax.set_xlabel("Итерация")
+        ax.set_ylabel("Количество блоков")
+        ax.legend(loc='upper left')
+        ax.grid(which="major", linewidth=1.0)
+        fig.savefig(os.path.join(self.path, f"plot_{self.performed}.png"), dpi=300)
 
     def get_stat(self):
         queues = []
@@ -190,7 +246,7 @@ class Model:
                 "StgUsrs": stg_usrs,
                 "AvgStgUsrs": stg_usrs_count / self.stg_num}
 
-    def disable(self, disabled, failures, i):
+    def __disable(self, disabled, failures, i):
         if i in failures:
             for k in failures[i]:
                 if k in disabled:
@@ -204,26 +260,63 @@ class Model:
                 self.stgs[k].enable()
                 disabled.pop(k)
 
-    def usr_step(self, offset):
+    def __usr_step(self):
         for i in range(self.usr_num):
             if (i + 1) % self.duration[0] == 0:
                 self.model_time.tick()
-            self.usr_perform(i, [(i + 1 + offset) % self.usr_num])
+            self.__usr_perform(i, [(i + 1 + self.performed) % self.usr_num])
 
-    def usr_perform(self, sender: int, receivers: list):
+    def __usr_perform(self, sender: int, receivers: list):
         if sender >= len(self.usrs) or sender < 0:
-            raise ValueError()
+            raise ValueError(f"Wrong sender {sender}")
         for recv in receivers:
             if recv == sender or recv >= len(self.usrs) or recv < 0:
-                raise ValueError()
-        self.usrs[sender].perform([self.usrs[i].addr for i in receivers], {"info": f"{sender} -> {receivers}"})
+                return
+        self.usrs[sender].perform([self.usrs[i].addr for i in receivers], {"ypos": sender,
+                                                                           "info": f"{sender} -> {receivers}"})
 
-    def stg_step(self):
+    def __stg_step(self):
         self.model_time.tick()
         v_3_4 = 3 * (self.duration[1] - 1) // 4
         for s in self.stgs:
             s.perform_step_1()
         self.model_time.tick(v_3_4)
         for s in self.stgs:
-            s.perform_step_2()
+            s.perform_step_2(self.performed + 1)
         self.model_time.tick(self.duration[1] - v_3_4)
+
+    def __graph(self, scale):
+        bc = {}
+        for i, stg in enumerate(self.stgs):
+            lbc = stg.block_count
+            if lbc in bc:
+                bc[lbc].append(i)
+            else:
+                bc[lbc] = [i]
+        i = bc[max(bc)][0]
+
+        stg = self.stgs[i]
+        edge = {}
+        pos = {}
+        queue = list(set(stg.block_mesh.values()))
+        while queue:
+            block_id = queue.pop(0)
+            if block_id is None or block_id in edge or block_id == node.GENESIS_BLOCK:
+                continue
+            block = stg.load_block(block_id)
+            queue.extend(list(set(block.parents.values())))
+            edge[block_id] = list(block.parents.values())
+            pos[block_id] = [scale * block.on_iter, block.tx.data['ypos']]
+
+        p = {hash_node[0:5]: pos[hash_node] for hash_node in pos}
+        p.update({user: [scale * (self.performed + 1), idx] for idx, user in enumerate(list(self.stgs[i].block_mesh.keys()))})
+        q = [(u, self.stgs[i].block_mesh[u][0:5]) for u in self.stgs[i].block_mesh]
+        e = []
+        for s_hash in edge:
+            for r_hash in edge[s_hash]:
+                if r_hash == node.GENESIS_BLOCK:
+                    e.append((s_hash[0:5], "GEN"))
+                    p["GEN"] = [0, len(self.usrs) // 2]
+                else:
+                    e.append((s_hash[0:5], r_hash[0:5]))
+        return e, p, q

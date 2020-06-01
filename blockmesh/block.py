@@ -115,6 +115,7 @@ class Block:
         self.parents = parents if parents else {}
         self.timestamp = timestamp
         self.approved = None
+        self.on_iter = 1
 
     def __hash__(self):
         return int(self.hashs(), 16)
@@ -132,6 +133,7 @@ class Block:
     def copy(self):
         b = Block(self.tx, self.timestamp, self.parents.copy())
         b.approved = self.approved
+        b.on_iter = self.on_iter
         return b
 
     def set_parents(self, parents: dict):
@@ -158,7 +160,8 @@ class Block:
         return json.dumps({'header': {'version': self.version,
                                       'timestamp': self.timestamp,
                                       'parents': self.parents},
-                           'transaction': self.tx.dumps()})
+                           'transaction': self.tx.dumps(),
+                           'iter': self.on_iter})
 
     @staticmethod
     def loads(data):
@@ -168,10 +171,7 @@ class Block:
         :return: Block
         """
         data = json.loads(data)
-        block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
-        block.version = data['header']['version']
-        block.approved = True
-        return block
+        return Block.l(data)
 
     def save(self, path_to_dir):
         """
@@ -203,7 +203,12 @@ class Block:
             raise RuntimeError(f"Could not load Block: {path_to_file} not file")
         with open(path_to_file, "r") as json_file:
             data = json.load(json_file)
-            block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
-            block.version = data['header']['version']
-            block.approved = True
-            return block
+            return Block.l(data)
+
+    @staticmethod
+    def l(data):
+        block = Block(Transaction.loads(data['transaction']), data['header']['timestamp'], data['header']['parents'])
+        block.version = data['header']['version']
+        block.approved = True
+        block.on_iter = data['iter']
+        return block

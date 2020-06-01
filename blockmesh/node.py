@@ -261,7 +261,7 @@ class Storage:
         else:
             raise RuntimeError("WTF - perform step 1")
 
-    def perform_step_2(self):
+    def perform_step_2(self, i=0):
         """
         Шаг 2 - Конфликтующие транзакции откладываются, валидные внедряются в блокмеш
         """
@@ -269,9 +269,9 @@ class Storage:
             # print(f"Stg is disabled: {self.path_to_dir}. Unable to perform step 2.")
             return
         if self.mod == Mod.Classic:
-            self.__perform_step_2()
+            self.__perform_step_2(i)
         elif self.mod == Mod.Modified:
-            self.__perform_step_2_mod()
+            self.__perform_step_2_mod(i)
         else:
             raise RuntimeError("WTF - perform step 2")
 
@@ -328,7 +328,7 @@ class Storage:
         else:
             raise RuntimeError("WTF - send block")
 
-    def __perform_step_2(self):
+    def __perform_step_2(self, i):
         if not self.shared_blocks:
             return
         self.shared_blocks.sort(key=lambda b: b.timestamp)
@@ -336,12 +336,12 @@ class Storage:
         while self.shared_blocks:
             block = self.shared_blocks.pop(0)
             cblock = block.copy()
-            if not self.__check_and_insert(block, participants):
+            if not self.__check_and_insert(block, participants, i):
                 continue
             if self.queue and cblock in self.queue:
                 self.queue.remove(cblock)
 
-    def __perform_step_2_mod(self):
+    def __perform_step_2_mod(self, i):
         if not self.shared_blocks:
             return
         blocks = list(self.shared_blocks.keys())
@@ -354,12 +354,12 @@ class Storage:
                 # print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
                 continue
             cblock = block.copy()
-            if not self.__check_and_insert(block, participants):
+            if not self.__check_and_insert(block, participants, i):
                 continue
             if self.queue and cblock in self.queue:
                 self.queue.pop(cblock)
 
-    def __check_and_insert(self, block, participants):
+    def __check_and_insert(self, block, participants, i):
         # проверка
         users = block.participants()
         for user in users:
@@ -368,6 +368,7 @@ class Storage:
         participants.update(users)
         # внедрение в блокмеш
         block.set_parents({usr: self.block_mesh[usr] for usr in users})
+        block.on_iter = i
         fname = block.save(self.path_to_dir)
         for user in users:
             self.block_mesh[user] = fname

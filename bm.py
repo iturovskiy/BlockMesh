@@ -29,6 +29,9 @@ def bm_status(args):
                   f"Usr number:\t{m.usr_num}")
         print(f"Duration 1:\t{m.duration[0]}\n"
               f"Duration 2:\t{m.duration[1]}\n")
+        if args.draw:
+            m.draw_plot()
+            m.draw_graph()
 
 
 def bm_init(args):
@@ -48,23 +51,26 @@ def bm_run(args):
     """Обработка ветви: bm.py run"""
     path = os.path.join(os.getcwd(), args.path)
     disabled = None
-    try:
-        print("Loading model...")
-        m = model.Model.load(path)
-        print(f"Running model for {args.ROUNDS} rounds...")
-        if args.rounds:
-            disabled = {r: args.stgs for r in args.rounds} if args.stgs else {r: [0] for r in args.rounds}
-            for k in disabled:
-                print(f"\tRound {k}. Stgs to disable: {disabled[k]}")
-        m.perform(args.ROUNDS, disabled)
-        print(f"Saving...")
-        m.save()
-        print("Success! Results:")
-        stat = m.get_stat()
-        for k in stat:
-            print(f"{k}:\t{stat[k]}")
-    except Exception as e:
-        print(f"Error: {e}")
+    # try:
+    print("Loading model...")
+    m = model.Model.load(path)
+    print(f"Running model for {args.ROUNDS} rounds...")
+    if args.rounds:
+        disabled = {r: args.stgs for r in args.rounds} if args.stgs else {r: [0] for r in args.rounds}
+        for k in disabled:
+            print(f"\tRound {k}. Stgs to disable: {disabled[k]}")
+    m.perform(args.ROUNDS, disabled)
+    print(f"Saving...")
+    m.save()
+    print("Success! Results:")
+    stat = m.get_stat()
+    for k in stat:
+        print(f"{k}:\t{stat[k]}")
+    if args.draw:
+        m.draw_plot()
+        m.draw_graph()
+    # except Exception as e:
+    #     print(f"Error: {e}")
 
 
 def parse_args():
@@ -86,6 +92,8 @@ def parse_args():
                                help="Path to directory containing blockmesh model")
     parser_status.add_argument("-f", "--full", dest="full", action='store_true',
                                help="Load and check whole blockmesh model. Gives more info")
+    parser_status.add_argument("-d", "--draw", dest="draw", action='store_true',
+                               help="Draw graph and plot")
     parser_status.set_defaults(func=bm_status)
 
     # init branch
@@ -108,6 +116,8 @@ def parse_args():
                             nargs="*", help="Rounds in which storages are being disabled")
     parser_run.add_argument("-s", "--stgs", dest="stgs", metavar="stgs", type=int, action="extend",
                             nargs="*", help="Storages that are being disabled")
+    parser_run.add_argument("-d", "--draw", dest="draw", action='store_true',
+                            help="Draw graph and plot")
     parser_run.set_defaults(func=bm_run)
 
     return parser.parse_args()
@@ -116,8 +126,8 @@ def parse_args():
 if __name__ == "__main__":
     """
     status -p test/test_classic -f
-    init -p test/test_classic Classic 10 100 60 10
-    run -p test/test_classic 10
+    init -p test/test_classic Classic 3 10 60 10
+    run -p test/test_classic 5
 
     status -p test/test_mod -f
     init -p test/test_mod Modified 10 100 60 10
