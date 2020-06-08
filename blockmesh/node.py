@@ -161,7 +161,8 @@ class Storage:
                 other_stg = stg
                 break
         if other_stg is None or not other_index:
-            raise Warning(f"INFO: Unable to refresh blocks -> no available stg: {self.stg_list}")
+            raise Warning(f"INFO: Unable to refresh blocks ->"
+                          f" no available stg: {self.stg_list}")
         if self_index == other_index:
             return
         check_index = other_index.copy()
@@ -178,9 +179,6 @@ class Storage:
                                f"Check index: {check_index}")
         self.block_count = len(self_index)
 
-    def load_block(self, block_id):
-        return Block.load(os.path.join(self.path_to_dir, block_id))
-
     def index_blocks(self):
         """
         :return: set из хэшей всех блоков в блокмеше
@@ -195,6 +193,9 @@ class Storage:
             queue.extend(list(set(block.parents.values())))
             index.add(block_id)
         return index
+
+    def load_block(self, block_id):
+        return Block.load(os.path.join(self.path_to_dir, block_id))
 
     def add_new_block(self, block: Block):
         """
@@ -298,7 +299,10 @@ class Storage:
             self.__block_sending(block)
 
     def __perform_step_1_mod(self):
+        to_send = len(self.user_map)
         for block, count in self.queue.items():
+            if to_send == 0:
+                break
             if self.check_block(block) is False:
                 block.approved = False
                 self.user_map[block.sender()].receive_from_stg(block)
@@ -306,6 +310,7 @@ class Storage:
                 continue
             block.approved = True
             self.__block_sending(block, count)
+            to_send -= 1
 
     def __block_sending(self, block, count=None):
         if self.mod == Mod.Classic:
@@ -351,7 +356,6 @@ class Storage:
             block = blocks.pop(0)
             count = self.shared_blocks.pop(block)
             if len(block.participants()) != count:
-                # print(f"INFO: {self.path_to_dir} Got participants: {count}. Expected: {len(block.participants())}")
                 continue
             cblock = block.copy()
             if not self.__check_and_insert(block, participants, i):
@@ -538,11 +542,11 @@ class User:
         receivers = self.stg.get_users(recv_addr)
         for receiver in receivers:
             if receiver is None:
-                # print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
+                print(f"INFO: One of receivers potential unavailable: {recv_addr} -> {receivers}")
                 return None
             receiver.sign_tx(tx)
             if receiver.stg.available is False:
-                raise RuntimeError()
+                raise RuntimeError(f"{receiver.addr} is not available!")
         block = self.__create_block(tx)
         self.stg.add_new_block(block)
         return block, receivers

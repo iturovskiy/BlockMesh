@@ -61,8 +61,8 @@ class Transaction:
     def sign(self, addr: str, sign: str):
         """
         Подпись транзакции получателем
-        :param addr: адрес получателя
-        :param sign: подпись получателя
+        :param addr: адрес участника
+        :param sign: подпись участника
         """
         if addr not in self.participants:
             raise RuntimeError(f"'{addr}' could not sign {str(self)}")
@@ -76,8 +76,8 @@ class Transaction:
         """
         if self.sender is None or self.participants is None:
             return False
-        for i in self.participants.values():
-            if i == NOT_SIGNED:
+        for sign in self.participants.values():
+            if sign == NOT_SIGNED:
                 return False
         return True
 
@@ -100,13 +100,13 @@ class Block:
     """
     Блок транзакции
     """
-    version = '0.01'  # версия, пущай будет
+    version = '0.01'  # версия
 
     def __init__(self, transaction: Transaction, timestamp: int = None, parents: dict = None):
         """
         :param transaction: готовая транзакция
         :param parents: хеши родительских блоков
-        :param timestamp: временная метка - количество нс с начала Эпохи
+        :param timestamp: временная метка
         """
         if not transaction.is_ready():
             raise RuntimeError(f"Could not create block for unsigned transaction: {transaction}; "
